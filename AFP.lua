@@ -13,12 +13,76 @@ local autoKillAllEnabled = false
 local autoShootMurdEnabled = false
 local autoResetMurdEnabled = false
 local antiAfkEnabled = false
+local noRenderEnabled = false
 
 local afkConnection
 local hasResetThisLife = false
 local isResetting = false
 local currentResetConnection = nil
 local hasResetOnMaxCoins = false
+
+local blackScreenGui = nil
+local blackScreenFrame = nil
+local NoRenderColor = Color3.fromRGB(0, 0, 0)
+
+local function CreateBlackScreen()
+    if blackScreenGui then return end
+    
+    blackScreenGui = Instance.new("ScreenGui")
+    blackScreenGui.Name = "NoRenderBackground"
+    blackScreenGui.DisplayOrder = -99999
+    blackScreenGui.IgnoreGuiInset = true
+    blackScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    blackScreenGui.ResetOnSpawn = false
+    
+    blackScreenFrame = Instance.new("Frame")
+    blackScreenFrame.Size = UDim2.new(1, 0, 1, 0)
+    blackScreenFrame.BackgroundColor3 = NoRenderColor
+    blackScreenFrame.BorderSizePixel = 0
+    blackScreenFrame.Parent = blackScreenGui
+    
+    blackScreenGui.Parent = player:WaitForChild("PlayerGui")
+end
+
+local function RemoveBlackScreen()
+    if blackScreenGui then
+        blackScreenGui:Destroy()
+        blackScreenGui = nil
+        blackScreenFrame = nil
+    end
+end
+
+local function ToggleNoRender()
+    noRenderEnabled = not noRenderEnabled
+    RunService:Set3dRenderingEnabled(not noRenderEnabled)
+    
+    if noRenderEnabled then
+        CreateBlackScreen()
+    else
+        RemoveBlackScreen()
+    end
+end
+
+local function SetNoRenderState(state)
+    if state == noRenderEnabled then return end
+    ToggleNoRender()
+end
+
+local function CleanupNoRender()
+    if noRenderEnabled then
+        RunService:Set3dRenderingEnabled(true)
+        RemoveBlackScreen()
+        noRenderEnabled = false
+    end
+end
+
+player.CharacterAdded:Connect(function()
+    if noRenderEnabled then
+        task.wait(0.5)
+        RunService:Set3dRenderingEnabled(false)
+        CreateBlackScreen()
+    end
+end)
 
 local function getRole()
 	local bp = player:FindFirstChild("Backpack")
@@ -287,6 +351,10 @@ task.spawn(function()
 			end
 		end
 	end)
+end)
+
+combat_section:AddToggle("Disable 3D Rendering", function(v)
+    SetNoRenderState(v)
 end)
 
 combat_section:AddToggle("Auto Kill All", function(v)
