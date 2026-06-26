@@ -12,6 +12,7 @@ local RunService = game:GetService("RunService")
 local autoKillAllEnabled = false
 local autoShootMurdEnabled = false
 local autoResetMurdEnabled = false
+local autoResetSheriffEnabled = false
 local antiAfkEnabled = false
 local noRenderEnabled = false
 
@@ -20,6 +21,8 @@ local hasResetThisLife = false
 local isResetting = false
 local currentResetConnection = nil
 local hasResetOnMaxCoins = false
+local sheriffResetInProgress = false
+local gunCheckConnection = nil
 
 local blackScreenGui = nil
 local blackScreenFrame = nil
@@ -108,6 +111,19 @@ local function getMurd()
 	return nil
 end
 
+local function getSheriff()
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= player then
+			local bp = plr:FindFirstChild("Backpack")
+			local char = plr.Character
+			if (bp and bp:FindFirstChild("Gun")) or (char and char:FindFirstChild("Gun")) then
+				return plr
+			end
+		end
+	end
+	return nil
+end
+
 local function getGun()
 	local char = player.Character
 	if char and char:FindFirstChild("Gun") then
@@ -162,7 +178,7 @@ local function fullyRestoreCharacter(character, savedData)
 	end
 end
 
-local function resetMurderer(TargetPlayer)
+local function resetPlayer(TargetPlayer)
 	if not TargetPlayer then return end
 	if isResetting then return end
 	
@@ -267,6 +283,87 @@ local function killAll()
 	end
 end
 
+local function shootMurd()
+	local gun = getGun()
+	if not gun then return end
+	if gun.Parent == player.Backpack then
+		local char = player.Character
+		if char and char:FindFirstChildOfClass("Humanoid") then
+			char.Humanoid:EquipTool(gun)
+		end
+	end
+	task.wait(0.3)
+	local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+	vU:Button1Down(center, Camera.CFrame)
+	task.wait(0.1)
+	vU:Button1Up(center, Camera.CFrame)
+end
+
+local function startShootingMurderer()
+    task.spawn(function()
+        local murd = getMurd()
+        if not murd or not murd.Character then
+            return
+        end
+        
+        for i = 1, 12 do
+            if not hasGun() then break end
+            
+            local currentMurd = getMurd()
+            if not currentMurd or not currentMurd.Character then
+                break
+            end
+            
+            local humanoid = currentMurd.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid and humanoid.Health <= 0 then
+                break
+            end
+            
+            shootMurd()
+            task.wait(3)
+        end
+    end)
+end
+
+local function startGunCheck()
+    if gunCheckConnection then
+        gunCheckConnection:Disconnect()
+        gunCheckConnection = nil
+    end
+    
+    local startTime = tick()
+    local gotGun = false
+    
+    gunCheckConnection = RunService.Heartbeat:Connect(function()
+        if tick() - startTime > 5 then
+            if gunCheckConnection then
+                gunCheckConnection:Disconnect()
+                gunCheckConnection = nil
+            end
+            
+            if not gotGun then
+                local murd = getMurd()
+                if murd and murd ~= player then
+                    resetPlayer(murd)
+                end
+            end
+            return
+        end
+        
+        if hasGun() then
+            gotGun = true
+            if gunCheckConnection then
+                gunCheckConnection:Disconnect()
+                gunCheckConnection = nil
+            end
+            
+            if autoShootMurdEnabled then
+                startShootingMurderer()
+            end
+        end
+    end)
+end
+
 local function autoResetOnRespawn()
 	if not autoResetMurdEnabled then return end
 	if hasResetThisLife then return end
@@ -280,29 +377,21 @@ local function autoResetOnRespawn()
 	hasResetThisLife = true
 	task.wait(0.5)
 	task.spawn(function()
-		resetMurderer(murd)
+		resetPlayer(murd)
 	end)
 end
 
 player.CharacterAdded:Connect(function()
 	hasResetThisLife = false
 	hasResetOnMaxCoins = false
+	sheriffResetInProgress = false
+	if gunCheckConnection then
+		gunCheckConnection:Disconnect()
+		gunCheckConnection = nil
+	end
 	task.wait(2)
 	autoResetOnRespawn()
 end)
-
-local function shootMurd()
-	local gun = getGun()
-	if not gun then return end
-	if gun.Parent == player.Backpack then
-		player.Character.Humanoid:EquipTool(gun)
-	end
-	task.wait(0.3)
-	local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
-	vU:Button1Down(center, Camera.CFrame)
-	task.wait(0.1)
-	vU:Button1Up(center, Camera.CFrame)
-end
 
 task.spawn(function()
 	local CoinCollected = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("CoinCollected")
@@ -319,19 +408,38 @@ task.spawn(function()
 			task.spawn(function()
 				killAll()
 			end)
+			return
 		end
 		
 		if role == "Sheriff" and autoShootMurdEnabled and hasGun() then
 			task.spawn(function()
-				for i = 1, 12 do
-					shootMurd()
-					task.wait(3)
-					local murd = getMurd()
-					if not murd or not murd.Character or murd.Character:FindFirstChildOfClass("Humanoid").Health <= 0 then
-						break
+				startShootingMurderer()
+			end)
+			return
+		end
+		
+		if role == "Innocent" and autoResetSheriffEnabled then
+			if sheriffResetInProgress then return end
+			sheriffResetInProgress = true
+			
+			task.spawn(function()
+				if not hasGun() then
+					local sheriff = getSheriff()
+					if sheriff and sheriff ~= player then
+						resetPlayer(sheriff)
+						task.wait(1)
+						startGunCheck()
+					end
+				else
+					if autoShootMurdEnabled then
+						startShootingMurderer()
 					end
 				end
+				
+				task.wait(2)
+				sheriffResetInProgress = false
 			end)
+			return
 		end
 		
 		if role ~= "Murderer" and autoResetMurdEnabled then
@@ -345,7 +453,7 @@ task.spawn(function()
 				task.spawn(function()
 					local murd = getMurd()
 					if murd and murd ~= player then
-						resetMurderer(murd)
+						resetPlayer(murd)
 					end
 				end)
 			end
@@ -367,6 +475,10 @@ end)
 
 combat_section:AddToggle("Auto Reset Murderer", function(v)
 	autoResetMurdEnabled = v
+end)
+
+combat_section:AddToggle("Auto Reset Sheriff", function(v)
+	autoResetSheriffEnabled = v
 end)
 
 combat_section:AddToggle("Anti AFK", function(v)
