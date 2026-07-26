@@ -733,21 +733,21 @@ combat_section:AddToggle("Auto Grab Gun", function(enabled)
     autoGGEnabled = enabled
     autoGGMaid:DoCleaning()
     if enabled then
-        local thread = task.spawn(function()
-            task.wait(0.3)
-            while autoGGEnabled do
-                pcall(function()
-                    if player.Character and not hasGun() then
-                        local gunDrop = findGunDropPart()
-                        if gunDrop then
-                            bringGun()
-                        end
-                    end
-                end)
-                task.wait(0.5)
+        local lastAttemptTime = 0
+        local connection = RunService.Heartbeat:Connect(function()
+            if not autoGGEnabled then return end
+            if not player.Character then return end
+            if hasGun() then return end
+            local gunDrop = findGunDropPart()
+            if gunDrop then
+                local now = tick()
+                if now - lastAttemptTime > 0.2 then
+                    lastAttemptTime = now
+                    task.spawn(bringGun)
+                end
             end
         end)
-        autoGGMaid:GiveTask(function() task.cancel(thread) end)
+        autoGGMaid:GiveTask(connection)
     end
 end)
 
