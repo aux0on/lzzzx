@@ -1,6 +1,27 @@
 local shared = odh_shared_plugins
 local combat_section = shared.AddSection("Autofarm+")
 
+local trueAntiVoidConnection
+local originalDestroyHeight = workspace.FallenPartsDestroyHeight
+
+combat_section:AddToggle("Anti-Void", function(bool)
+    if trueAntiVoidConnection then
+        trueAntiVoidConnection:Disconnect()
+        trueAntiVoidConnection = nil
+    end
+    
+    if bool then
+        workspace.FallenPartsDestroyHeight = 0/0
+        
+        trueAntiVoidConnection = player.CharacterAdded:Connect(function(char)
+            task.wait(0.1)
+            workspace.FallenPartsDestroyHeight = 0/0
+        end)
+    else
+        workspace.FallenPartsDestroyHeight = originalDestroyHeight
+    end
+end)
+
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
@@ -664,15 +685,15 @@ combat_section:AddToggle("Disable 3D Rendering", function(v)
     SetNoRenderState(v)
 end)
 
-combat_section:AddToggle("Auto Kill All", function(v)
+combat_section:AddToggle("Auto-Kill All", function(v)
     autoKillAllEnabled = v
 end)
 
-combat_section:AddToggle("Auto Shoot Murd", function(v)
+combat_section:AddToggle("Auto-Shoot Murd", function(v)
     autoShootMurdEnabled = v
 end)
 
-combat_section:AddToggle("Auto Reset Murderer", function(v)
+combat_section:AddToggle("Auto-Reset Murderer", function(v)
     autoResetMurdEnabled = v
     updateNoclip()
     if v and player.Character and not hasFlingedMurdererThisLife then
@@ -680,7 +701,7 @@ combat_section:AddToggle("Auto Reset Murderer", function(v)
     end
 end)
 
-combat_section:AddToggle("Auto Reset Sheriff", function(v)
+combat_section:AddToggle("Auto-Reset Sheriff", function(v)
     autoResetSheriffEnabled = v
     if v then
         startSheriffFling()
@@ -690,7 +711,7 @@ combat_section:AddToggle("Auto Reset Sheriff", function(v)
     updateNoclip()
 end)
 
-combat_section:AddToggle("Reset All (once per round)", function(v)
+combat_section:AddToggle("Auto-Reset All", function(v)
     toggleResetAll(v)
 end)
 
@@ -699,18 +720,9 @@ combat_section:AddSlider("Max Fling Attempts", 1, 20, 3, function(value)
 end)
 
 local function findGunDropPart()
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj.Name == "GunDrop" then
-            if obj:IsA("BasePart") then
-                return obj
-            else
-                for _, child in ipairs(obj:GetChildren()) do
-                    if child:IsA("BasePart") then
-                        return child
-                    end
-                end
-            end
-        end
+    local gunDrop = workspace:FindFirstChild("GunDrop", true)
+    if gunDrop and gunDrop:IsA("BasePart") then
+        return gunDrop
     end
     return nil
 end
@@ -721,37 +733,35 @@ local function bringGun()
     local rootPart = character:FindFirstChild("HumanoidRootPart")
     if not rootPart then return end
     local gunDrop = findGunDropPart()
-    if not gunDrop then return end
-
-    for i = 1, 5 do
+    if gunDrop then
         touch(rootPart, gunDrop)
-        task.wait(0.05)
     end
 end
 
-combat_section:AddToggle("Auto Grab Gun", function(enabled)
+local function grabGun()
+    if not findGunDropPart() then return false end
+    if hasGun() then return true end
+    bringGun()
+    task.wait(0.5)
+    return hasGun()
+end
+
+combat_section:AddToggle("Auto-Grab Gun", function(enabled)
     autoGGEnabled = enabled
     autoGGMaid:DoCleaning()
     if enabled then
-        local lastAttemptTime = 0
-        local connection = RunService.Heartbeat:Connect(function()
-            if not autoGGEnabled then return end
-            if not player.Character then return end
-            if hasGun() then return end
-            local gunDrop = findGunDropPart()
-            if gunDrop then
-                local now = tick()
-                if now - lastAttemptTime > 0.2 then
-                    lastAttemptTime = now
-                    task.spawn(bringGun)
+        task.spawn(function()
+            while autoGGEnabled do
+                if player.Character and findGunDropPart() and not hasGun() then
+                    grabGun()
                 end
+                task.wait(0.5)
             end
         end)
-        autoGGMaid:GiveTask(connection)
     end
 end)
 
-combat_section:AddToggle("Anti AFK", function(v)
+combat_section:AddToggle("Anti-AFK", function(v)
     antiAfkEnabled = v
     if afkConnection then
         afkConnection:Disconnect()
@@ -780,6 +790,8 @@ RootMaid:GiveTask(function()
     if resetAllMaid then resetAllMaid:Destroy() end
     autoGGMaid:DoCleaning()
     setNoclip(false)
+    if trueAntiVoidConnection then trueAntiVoidConnection:Disconnect() end
+    workspace.FallenPartsDestroyHeight = originalDestroyHeight
 end)
 
 shared.Notify("Autofarm+ loaded successfully!", 3)
