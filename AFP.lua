@@ -1,6 +1,8 @@
 local shared = odh_shared_plugins
 local combat_section = shared.AddSection("Autofarm+")
 
+local whitelist = {}
+
 local trueAntiVoidConnection
 local originalDestroyHeight = workspace.FallenPartsDestroyHeight
 
@@ -232,18 +234,22 @@ local function getRole()
     return "Innocent"
 end
 
+local function isWhitelisted(p)
+    return table.find(whitelist, p.UserId) ~= nil
+end
+
 local function getMurd()
     local roleData = getCachedRoleData()
     if roleData then
         for playerName, data in pairs(roleData) do
             if data.Role == "Murderer" and not data.Killed and not data.Dead then
                 local p = Players:FindFirstChild(playerName)
-                if p and p ~= player then return p end
+                if p and p ~= player and not isWhitelisted(p) then return p end
             end
         end
     end
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= player then
+        if plr ~= player and not isWhitelisted(plr) then
             local bp = plr:FindFirstChild("Backpack")
             local char = plr.Character
             if (bp and bp:FindFirstChild("Knife")) or (char and char:FindFirstChild("Knife")) then
@@ -260,12 +266,12 @@ local function getSheriff()
         for playerName, data in pairs(roleData) do
             if data.Role == "Sheriff" and not data.Killed and not data.Dead then
                 local p = Players:FindFirstChild(playerName)
-                if p and p ~= player then return p end
+                if p and p ~= player and not isWhitelisted(p) then return p end
             end
         end
     end
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= player then
+        if plr ~= player and not isWhitelisted(plr) then
             local bp = plr:FindFirstChild("Backpack")
             local char = plr.Character
             if (bp and bp:FindFirstChild("Gun")) or (char and char:FindFirstChild("Gun")) then
@@ -397,7 +403,7 @@ local function killAll()
 
     local targets = {}
     for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= player and p.Character then
+        if p ~= player and p.Character and not isWhitelisted(p) then
             local upperTorso = p.Character:FindFirstChild("UpperTorso")
             if upperTorso then table.insert(targets, upperTorso) end
         end
@@ -423,7 +429,7 @@ local function killAllExceptOne()
 
     local targets = {}
     for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= player and p.Character then
+        if p ~= player and p.Character and not isWhitelisted(p) then
             local upperTorso = p.Character:FindFirstChild("UpperTorso")
             if upperTorso then table.insert(targets, upperTorso) end
         end
@@ -512,7 +518,7 @@ local function executeResetAll()
 
         local targets = {}
         for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= player and p ~= murderer then
+            if p ~= player and p ~= murderer and not isWhitelisted(p) then
                 table.insert(targets, p)
             end
         end
@@ -781,6 +787,18 @@ if antiAfkEnabled then
         vU:ClickButton2(Vector2.new())
     end)
 end
+
+combat_section:AddPlayerDropdown("Whitelist Player", function(p)
+    if not table.find(whitelist, p.UserId) then
+        table.insert(whitelist, p.UserId)
+        shared.Notify(p.Name .. " whitelisted.", 2)
+    end
+end)
+
+combat_section:AddButton("Clear Whitelist", function()
+    whitelist = {}
+    shared.Notify("Whitelist cleared.", 2)
+end)
 
 RootMaid:GiveTask(function()
     CleanupNoRender()
