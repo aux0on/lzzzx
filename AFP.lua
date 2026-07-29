@@ -28,6 +28,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 local vU = game:GetService("VirtualUser")
+local VIM = game:GetService("VirtualInputManager")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
@@ -507,9 +508,12 @@ local function shootMurd()
     if not equipGun() then return end
     task.wait(0.2)
     local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+
     vU:Button1Down(center, Camera.CFrame)
+    VIM:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
     task.wait(0.1)
     vU:Button1Up(center, Camera.CFrame)
+    VIM:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
 end
 
 local function startShootingMurderer()
