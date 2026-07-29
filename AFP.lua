@@ -608,21 +608,15 @@ local function startSheriffFling()
     if sheriffFlingMaid then sheriffFlingMaid:Destroy() end
     sheriffFlingMaid = Maid.new()
     local thread = task.spawn(function()
-        local attempts = 0
         while autoResetSheriffEnabled do
-            if attempts >= maxFlingAttempts then
-                autoResetSheriffEnabled = false
-                shared.Notify("Sheriff Fling", "Max attempts reached (" .. maxFlingAttempts .. ")", 3)
-                break
-            end
-            pcall(function()
-                local target = getSheriff()
-                if target and target ~= player then
-                    resetPlayer(target)
-                    attempts = attempts + 1
+            local target = getSheriff()
+            if target and target ~= player then
+                resetPlayer(target)
+                while getSheriff() and autoResetSheriffEnabled do
+                    task.wait(0.5)
                 end
-            end)
-            task.wait(0.4)
+            end
+            task.wait(0.3)
         end
         if sheriffFlingMaid then
             sheriffFlingMaid:Destroy()
