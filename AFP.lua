@@ -427,30 +427,38 @@ local function killAllExceptOne()
     local handleTouched = events:FindFirstChild("HandleTouched")
     if not handleTouched then return end
 
-    local targets = {}
+    local allPlayers = {}
+    local whitelistedPlayers = {}
     for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= player and p.Character and not isWhitelisted(p) then
+        if p ~= player and p.Character then
             local upperTorso = p.Character:FindFirstChild("UpperTorso")
-            if upperTorso then table.insert(targets, upperTorso) end
+            if upperTorso then
+                if isWhitelisted(p) then
+                    table.insert(whitelistedPlayers, upperTorso)
+                else
+                    table.insert(allPlayers, upperTorso)
+                end
+            end
         end
     end
 
-    if #targets == 0 then return end
-
-    local survivorIndex = math.random(1, #targets)
-    local survivor = targets[survivorIndex]
-    local killTargets = {}
-    for i, target in ipairs(targets) do
-        if target ~= survivor then
-            table.insert(killTargets, target)
+    if #whitelistedPlayers > 0 then
+        for _, upperTorso in ipairs(allPlayers) do
+            handleTouched:FireServer(upperTorso)
+            task.wait(0.05)
         end
+        return
     end
 
-    if #killTargets == 0 then return end
+    if #allPlayers == 0 then return end
 
-    for _, upperTorso in ipairs(killTargets) do
-        handleTouched:FireServer(upperTorso)
-        task.wait(0.1)
+    local survivorIndex = math.random(1, #allPlayers)
+    local survivor = allPlayers[survivorIndex]
+    for i, upperTorso in ipairs(allPlayers) do
+        if upperTorso ~= survivor then
+            handleTouched:FireServer(upperTorso)
+            task.wait(0.05)
+        end
     end
 end
 
@@ -513,12 +521,9 @@ local function executeResetAll()
     if role == "Murderer" then
         killAllExceptOne()
     else
-        local murderer = getMurd()
-        if not murderer then return end
-
         local targets = {}
         for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= player and p ~= murderer and not isWhitelisted(p) then
+            if p ~= player and not isWhitelisted(p) then
                 table.insert(targets, p)
             end
         end
