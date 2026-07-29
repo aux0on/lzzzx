@@ -1,8 +1,6 @@
 local shared = odh_shared_plugins
 local combat_section = shared.AddSection("Autofarm+")
 
-local whitelist = {}
-
 local trueAntiVoidConnection
 local originalDestroyHeight = workspace.FallenPartsDestroyHeight
 
@@ -167,10 +165,10 @@ RootMaid:GiveTask(autoGGMaid)
 local maxFlingAttempts = 3
 local resetAllState = "waiting"
 local hasFlingedMurdererThisLife = false
-local justSpawned = true
 
 local blackScreenGui = nil
 local blackScreenFrame = nil
+local NoRenderColor = Color3.fromRGB(0,0,0)
 
 local function CreateBlackScreen()
     if blackScreenGui then return end
@@ -216,9 +214,6 @@ local function CleanupNoRender()
 end
 
 player.CharacterAdded:Connect(function()
-    justSpawned = true
-    task.wait(2)
-    justSpawned = false
     if noRenderEnabled then
         task.wait(0.5)
         RunService:Set3dRenderingEnabled(false)
@@ -237,22 +232,18 @@ local function getRole()
     return "Innocent"
 end
 
-local function isWhitelisted(p)
-    return table.find(whitelist, p.UserId) ~= nil
-end
-
 local function getMurd()
     local roleData = getCachedRoleData()
     if roleData then
         for playerName, data in pairs(roleData) do
             if data.Role == "Murderer" and not data.Killed and not data.Dead then
                 local p = Players:FindFirstChild(playerName)
-                if p and p ~= player and not isWhitelisted(p) then return p end
+                if p and p ~= player then return p end
             end
         end
     end
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= player and not isWhitelisted(plr) then
+        if plr ~= player then
             local bp = plr:FindFirstChild("Backpack")
             local char = plr.Character
             if (bp and bp:FindFirstChild("Knife")) or (char and char:FindFirstChild("Knife")) then
@@ -269,12 +260,12 @@ local function getSheriff()
         for playerName, data in pairs(roleData) do
             if data.Role == "Sheriff" and not data.Killed and not data.Dead then
                 local p = Players:FindFirstChild(playerName)
-                if p and p ~= player and not isWhitelisted(p) then return p end
+                if p and p ~= player then return p end
             end
         end
     end
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= player and not isWhitelisted(plr) then
+        if plr ~= player then
             local bp = plr:FindFirstChild("Backpack")
             local char = plr.Character
             if (bp and bp:FindFirstChild("Gun")) or (char and char:FindFirstChild("Gun")) then
@@ -406,7 +397,7 @@ local function killAll()
 
     local targets = {}
     for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= player and p.Character and not isWhitelisted(p) then
+        if p ~= player and p.Character then
             local upperTorso = p.Character:FindFirstChild("UpperTorso")
             if upperTorso then table.insert(targets, upperTorso) end
         end
@@ -430,38 +421,30 @@ local function killAllExceptOne()
     local handleTouched = events:FindFirstChild("HandleTouched")
     if not handleTouched then return end
 
-    local allPlayers = {}
-    local whitelistedPlayers = {}
+    local targets = {}
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= player and p.Character then
             local upperTorso = p.Character:FindFirstChild("UpperTorso")
-            if upperTorso then
-                if isWhitelisted(p) then
-                    table.insert(whitelistedPlayers, upperTorso)
-                else
-                    table.insert(allPlayers, upperTorso)
-                end
-            end
+            if upperTorso then table.insert(targets, upperTorso) end
         end
     end
 
-    if #whitelistedPlayers > 0 then
-        for _, upperTorso in ipairs(allPlayers) do
-            handleTouched:FireServer(upperTorso)
-            task.wait(0.05)
+    if #targets == 0 then return end
+
+    local survivorIndex = math.random(1, #targets)
+    local survivor = targets[survivorIndex]
+    local killTargets = {}
+    for i, target in ipairs(targets) do
+        if target ~= survivor then
+            table.insert(killTargets, target)
         end
-        return
     end
 
-    if #allPlayers == 0 then return end
+    if #killTargets == 0 then return end
 
-    local survivorIndex = math.random(1, #allPlayers)
-    local survivor = allPlayers[survivorIndex]
-    for i, upperTorso in ipairs(allPlayers) do
-        if upperTorso ~= survivor then
-            handleTouched:FireServer(upperTorso)
-            task.wait(0.05)
-        end
+    for _, upperTorso in ipairs(killTargets) do
+        handleTouched:FireServer(upperTorso)
+        task.wait(0.1)
     end
 end
 
@@ -524,9 +507,12 @@ local function executeResetAll()
     if role == "Murderer" then
         killAllExceptOne()
     else
+        local murderer = getMurd()
+        if not murderer then return end
+
         local targets = {}
         for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= player and not isWhitelisted(p) then
+            if p ~= player and p ~= murderer then
                 table.insert(targets, p)
             end
         end
@@ -644,7 +630,6 @@ local function stopSheriffFling()
 end
 
 local function flingMurdererOnRespawn()
-    if justSpawned then return end
     if not autoResetMurdEnabled then return end
     if hasFlingedMurdererThisLife then return end
 
@@ -711,7 +696,7 @@ end)
 combat_section:AddToggle("Auto-Reset Murderer", function(v)
     autoResetMurdEnabled = v
     updateNoclip()
-    if v and player.Character and not hasFlingedMurdererThisLife and not justSpawned then
+    if v and player.Character and not hasFlingedMurdererThisLife then
         task.spawn(flingMurdererOnRespawn)
     end
 end)
@@ -796,18 +781,6 @@ if antiAfkEnabled then
         vU:ClickButton2(Vector2.new())
     end)
 end
-
-combat_section:AddPlayerDropdown("Whitelist Player", function(p)
-    if not table.find(whitelist, p.UserId) then
-        table.insert(whitelist, p.UserId)
-        shared.Notify(p.Name .. " whitelisted.", 2)
-    end
-end)
-
-combat_section:AddButton("Clear Whitelist", function()
-    whitelist = {}
-    shared.Notify("Whitelist cleared.", 2)
-end)
 
 RootMaid:GiveTask(function()
     CleanupNoRender()
