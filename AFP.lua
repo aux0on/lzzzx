@@ -237,6 +237,28 @@ local function isWhitelisted(p)
     return table.find(whitelist, p.UserId) ~= nil
 end
 
+local function getAnyMurd()
+    local roleData = getCachedRoleData()
+    if roleData then
+        for playerName, data in pairs(roleData) do
+            if data.Role == "Murderer" and not data.Killed and not data.Dead then
+                local p = Players:FindFirstChild(playerName)
+                if p and p ~= player then return p end
+            end
+        end
+    end
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player then
+            local bp = plr:FindFirstChild("Backpack")
+            local char = plr.Character
+            if (bp and bp:FindFirstChild("Knife")) or (char and char:FindFirstChild("Knife")) then
+                return plr
+            end
+        end
+    end
+    return nil
+end
+
 local function getMurd()
     local roleData = getCachedRoleData()
     if roleData then
@@ -520,7 +542,7 @@ local function executeResetAll()
     if role == "Murderer" then
         killAllExceptOne()
     else
-        local murderer = getMurd()
+        local murderer = getAnyMurd()
         local targets = {}
         for _, p in ipairs(Players:GetPlayers()) do
             if p ~= player and p ~= murderer and not isWhitelisted(p) then
@@ -555,7 +577,7 @@ local function startResetAllMonitor()
                         shouldRun = true
                     end
                 else
-                    if getMurd() then
+                    if getAnyMurd() then
                         shouldRun = true
                     end
                 end
@@ -570,7 +592,7 @@ local function startResetAllMonitor()
                         resetAllState = "waiting"
                     end
                 else
-                    if not getMurd() then
+                    if not getAnyMurd() then
                         resetAllState = "waiting"
                     end
                 end
