@@ -567,6 +567,7 @@ local function startResetAllMonitor()
 
     local thread = task.spawn(function()
         while resetAllEnabled do
+            setNoclip(true)
             local role = getMyRole() or getRole()
 
             if resetAllState == "waiting" then
