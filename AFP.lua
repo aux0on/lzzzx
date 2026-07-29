@@ -167,10 +167,10 @@ RootMaid:GiveTask(autoGGMaid)
 local maxFlingAttempts = 3
 local resetAllState = "waiting"
 local hasFlingedMurdererThisLife = false
+local justSpawned = true
 
 local blackScreenGui = nil
 local blackScreenFrame = nil
-local NoRenderColor = Color3.fromRGB(0,0,0)
 
 local function CreateBlackScreen()
     if blackScreenGui then return end
@@ -216,6 +216,9 @@ local function CleanupNoRender()
 end
 
 player.CharacterAdded:Connect(function()
+    justSpawned = true
+    task.wait(2)
+    justSpawned = false
     if noRenderEnabled then
         task.wait(0.5)
         RunService:Set3dRenderingEnabled(false)
@@ -641,6 +644,7 @@ local function stopSheriffFling()
 end
 
 local function flingMurdererOnRespawn()
+    if justSpawned then return end
     if not autoResetMurdEnabled then return end
     if hasFlingedMurdererThisLife then return end
 
@@ -707,7 +711,7 @@ end)
 combat_section:AddToggle("Auto-Reset Murderer", function(v)
     autoResetMurdEnabled = v
     updateNoclip()
-    if v and player.Character and not hasFlingedMurdererThisLife then
+    if v and player.Character and not hasFlingedMurdererThisLife and not justSpawned then
         task.spawn(flingMurdererOnRespawn)
     end
 end)
