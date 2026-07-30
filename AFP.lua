@@ -3,29 +3,26 @@ local combat_section = shared.AddSection("Autofarm+")
 
 local whitelist = {}
 
+local Players = game:GetService("Players")
+while not Players.LocalPlayer do task.wait() end
+local player = Players.LocalPlayer
+
 local trueAntiVoidConnection
 local originalDestroyHeight = workspace.FallenPartsDestroyHeight
 
-combat_section:AddToggle("Anti-Void", function(bool)
+local function setupAntiVoid()
+    if not player then return end
     if trueAntiVoidConnection then
         trueAntiVoidConnection:Disconnect()
         trueAntiVoidConnection = nil
     end
-    
-    if bool then
+    workspace.FallenPartsDestroyHeight = 0/0
+    trueAntiVoidConnection = player.CharacterAdded:Connect(function(char)
+        task.wait(0.1)
         workspace.FallenPartsDestroyHeight = 0/0
-        
-        trueAntiVoidConnection = player.CharacterAdded:Connect(function(char)
-            task.wait(0.1)
-            workspace.FallenPartsDestroyHeight = 0/0
-        end)
-    else
-        workspace.FallenPartsDestroyHeight = originalDestroyHeight
-    end
-end)
+    end)
+end
 
-local Players = game:GetService("Players")
-local player = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 local vU = game:GetService("VirtualUser")
 local VIM = game:GetService("VirtualInputManager")
@@ -152,7 +149,6 @@ local autoShootMurdEnabled = false
 local autoResetMurdEnabled = false
 local autoResetSheriffEnabled = false
 local resetAllEnabled = false
-local antiAfkEnabled = false
 local noRenderEnabled = false
 local autoGGEnabled = false
 
@@ -793,27 +789,6 @@ combat_section:AddToggle("Auto-Grab Gun", function(enabled)
     end
 end)
 
-combat_section:AddToggle("Anti-AFK", function(v)
-    antiAfkEnabled = v
-    if afkConnection then
-        afkConnection:Disconnect()
-        afkConnection = nil
-    end
-    if v then
-        afkConnection = player.Idled:Connect(function()
-            vU:CaptureController()
-            vU:ClickButton2(Vector2.new())
-        end)
-    end
-end)
-
-if antiAfkEnabled then
-    player.Idled:Connect(function()
-        vU:CaptureController()
-        vU:ClickButton2(Vector2.new())
-    end)
-end
-
 combat_section:AddPlayerDropdown("Whitelist Player", function(p)
     if not table.find(whitelist, p.UserId) then
         table.insert(whitelist, p.UserId)
@@ -826,16 +801,138 @@ combat_section:AddButton("Clear Whitelist", function()
     shared.Notify("Whitelist cleared.", 2)
 end)
 
+local function setupAntiAFK()
+    if not player then return end
+    if afkConnection then
+        afkConnection:Disconnect()
+        afkConnection = nil
+    end
+    afkConnection = player.Idled:Connect(function()
+        vU:CaptureController()
+        vU:ClickButton2(Vector2.new())
+    end)
+end
+
+setupAntiVoid()
+setupAntiAFK()
+
+local waterMaid = nil
+local modifiedParts = {}
+local waterLoopThread = nil
+
+local function DisableWaterPart(part)
+    if part and part:IsA("BasePart") then
+        if not modifiedParts[part] then
+            modifiedParts[part] = {
+                CanTouch = part.CanTouch,
+                CanCollide = part.CanCollide,
+            }
+        end
+        part.CanTouch = false
+        part.CanCollide = false
+    end
+end
+
+local function RestoreWaterPart(part)
+    if part and modifiedParts[part] then
+        part.CanTouch = modifiedParts[part].CanTouch
+        part.CanCollide = modifiedParts[part].CanCollide
+        modifiedParts[part] = nil
+    end
+end
+
+local function RestoreAllParts()
+    for part, originalStates in pairs(modifiedParts) do
+        if part and part.Parent then
+            part.CanTouch = originalStates.CanTouch
+            part.CanCollide = originalStates.CanCollide
+        end
+    end
+    modifiedParts = {}
+end
+
+local function CheckMaps()
+    for part in pairs(modifiedParts) do
+        if not part or not part.Parent then
+            modifiedParts[part] = nil
+        end
+    end
+
+    local yacht = Workspace:FindFirstChild("Yacht")
+    if yacht then
+        local intereactive = yacht:FindFirstChild("Intereactive")
+        if intereactive then
+            local water = intereactive:FindFirstChild("Water")
+            if water then
+                DisableWaterPart(water:FindFirstChild("WaterPart"))
+            end
+        end
+    end
+    
+    local pier = Workspace:FindFirstChild("Pier")
+    if pier then
+        DisableWaterPart(pier:FindFirstChild("Respawn"))
+    end
+end
+
+local function enableWaterImmunity()
+    if waterMaid then
+        waterMaid:DoCleaning()
+        waterMaid = nil
+    end
+    
+    waterMaid = Maid.new()
+    
+    CheckMaps()
+    
+    waterLoopThread = task.spawn(function()
+        while waterMaid and not waterMaid._destroyed do
+            task.wait(0.5)
+            CheckMaps()
+        end
+    end)
+    waterMaid:GiveTask(function()
+        if waterLoopThread then
+            task.cancel(waterLoopThread)
+            waterLoopThread = nil
+        end
+    end)
+end
+
+local function disableWaterImmunity()
+    if waterMaid then
+        waterMaid:Destroy()
+        waterMaid = nil
+    end
+    if waterLoopThread then
+        task.cancel(waterLoopThread)
+        waterLoopThread = nil
+    end
+    RestoreAllParts()
+end
+
+enableWaterImmunity()
+
+RootMaid:GiveTask(function()
+    disableWaterImmunity()
+    if trueAntiVoidConnection then
+        trueAntiVoidConnection:Disconnect()
+        trueAntiVoidConnection = nil
+    end
+    workspace.FallenPartsDestroyHeight = originalDestroyHeight
+    if afkConnection then
+        afkConnection:Disconnect()
+        afkConnection = nil
+    end
+end)
+
 RootMaid:GiveTask(function()
     CleanupNoRender()
-    if afkConnection then afkConnection:Disconnect() end
     if currentResetConnection then currentResetConnection:Disconnect() end
     if sheriffFlingMaid then sheriffFlingMaid:Destroy() end
     if resetAllMaid then resetAllMaid:Destroy() end
     autoGGMaid:DoCleaning()
     setNoclip(false)
-    if trueAntiVoidConnection then trueAntiVoidConnection:Disconnect() end
-    workspace.FallenPartsDestroyHeight = originalDestroyHeight
 end)
 
 shared.Notify("Autofarm+ loaded successfully!", 3)
