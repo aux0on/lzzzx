@@ -168,6 +168,8 @@ local hasFlingedMurdererThisLife = false
 local blackScreenGui = nil
 local blackScreenFrame = nil
 
+local shootLoopThread = nil
+
 local function CreateBlackScreen()
     if blackScreenGui then return end
     blackScreenGui = Instance.new("ScreenGui")
@@ -216,6 +218,10 @@ player.CharacterAdded:Connect(function()
         task.wait(0.5)
         RunService:Set3dRenderingEnabled(false)
         CreateBlackScreen()
+    end
+    if shootLoopThread then
+        task.cancel(shootLoopThread)
+        shootLoopThread = nil
     end
 end)
 
@@ -693,9 +699,26 @@ task.spawn(function()
             return
         end
 
-        if hasGun() and autoShootMurdEnabled then
-            task.spawn(startShootingMurderer)
-            return
+        if autoShootMurdEnabled then
+            if hasGun() then
+                task.spawn(startShootingMurderer)
+                return
+            else
+                if shootLoopThread then
+                    task.cancel(shootLoopThread)
+                    shootLoopThread = nil
+                end
+                shootLoopThread = task.spawn(function()
+                    while player.Character and not hasGun() do
+                        task.wait(0.5)
+                    end
+                    if player.Character and hasGun() then
+                        startShootingMurderer()
+                    end
+                    shootLoopThread = nil
+                end)
+                return
+            end
         end
 
         if role ~= "Murderer" and autoResetMurdEnabled then
@@ -923,6 +946,10 @@ RootMaid:GiveTask(function()
     if afkConnection then
         afkConnection:Disconnect()
         afkConnection = nil
+    end
+    if shootLoopThread then
+        task.cancel(shootLoopThread)
+        shootLoopThread = nil
     end
 end)
 
