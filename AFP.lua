@@ -526,26 +526,17 @@ local function shootMurd()
 end
 
 local function startShootingMurderer()
-    task.spawn(function()
-        local attempts = 0
-        while not hasGun() and attempts < 20 do
-            task.wait(0.1)
-            attempts = attempts + 1
-        end
-        if not hasGun() then return end
-
-        local murd = getMurd()
-        if not murd or not murd.Character then return end
-
-        for i = 1, 12 do
+    shootLoopThread = task.spawn(function()
+        while true do
             if not hasGun() then break end
-            local currentMurd = getMurd()
-            if not currentMurd or not currentMurd.Character then break end
-            local humanoid = currentMurd.Character:FindFirstChildOfClass("Humanoid")
-            if humanoid and humanoid.Health <= 0 then break end
+            local murd = getMurd()
+            if not murd or not murd.Character then break end
+            local humanoid = murd.Character:FindFirstChildOfClass("Humanoid")
+            if not humanoid or humanoid.Health <= 0 then break end
             shootMurd()
-            task.wait(3)
+            task.wait(0.5)
         end
+        shootLoopThread = nil
     end)
 end
 
@@ -708,8 +699,7 @@ task.spawn(function()
 
         if autoShootMurdEnabled then
             if hasGun() then
-                task.spawn(startShootingMurderer)
-                return
+                startShootingMurderer()
             else
                 if shootLoopThread then
                     task.cancel(shootLoopThread)
@@ -721,10 +711,10 @@ task.spawn(function()
                     end
                     if player.Character and hasGun() then
                         startShootingMurderer()
+                    else
+                        shootLoopThread = nil
                     end
-                    shootLoopThread = nil
                 end)
-                return
             end
         end
 
