@@ -507,6 +507,20 @@ local function equipGun()
     return false
 end
 
+local function unequipGun()
+    local char = player.Character
+    if not char then return end
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    local gun = getGun()
+    if gun and gun.Parent == char then
+        local backpack = player:FindFirstChild("Backpack")
+        if backpack then
+            gun.Parent = backpack
+        end
+    end
+end
+
 local function shootMurd()
     if not equipGun() then return end
     task.wait(0.2)
@@ -526,6 +540,10 @@ local function shootMurd()
 end
 
 local function startShootingMurderer()
+    if shootLoopThread then
+        task.cancel(shootLoopThread)
+        shootLoopThread = nil
+    end
     shootLoopThread = task.spawn(function()
         while true do
             if not hasGun() then break end
@@ -536,6 +554,7 @@ local function startShootingMurderer()
             shootMurd()
             task.wait(0.5)
         end
+        unequipGun()
         shootLoopThread = nil
     end)
 end
@@ -674,6 +693,7 @@ local function flingMurdererOnRespawn()
 
     local murd = getMurd()
     if murd then
+        task.wait(0.5)
         resetPlayer(murd)
         hasFlingedMurdererThisLife = true
     end
@@ -721,6 +741,7 @@ task.spawn(function()
         if role ~= "Murderer" and autoResetMurdEnabled then
             if not (autoShootMurdEnabled and hasGun()) then
                 task.spawn(function()
+                    task.wait(0.5)
                     local target = getMurd()
                     if target then resetPlayer(target) end
                 end)
