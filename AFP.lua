@@ -1,4 +1,5 @@
 local shared = odh_shared_plugins
+if shared.game_name ~= "Murder Mystery 2" then return end
 local combat_section = shared.AddSection("Autofarm+")
 
 local whitelist = {}
