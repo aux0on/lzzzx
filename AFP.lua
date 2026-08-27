@@ -428,7 +428,8 @@ local function killAll()
     if not handleTouched then return end
 
     local targets = {}
-    for _, p in ipairs(Players:GetPlayers()) do
+    local pList = Players:GetPlayers()
+    for _, p in ipairs(pList) do
         if p ~= player and p.Character and not isWhitelisted(p) then
             local upperTorso = p.Character:FindFirstChild("UpperTorso")
             if upperTorso then table.insert(targets, upperTorso) end
@@ -455,7 +456,8 @@ local function killAllExceptOne()
 
     local allPlayers = {}
     local whitelistedPlayers = {}
-    for _, p in ipairs(Players:GetPlayers()) do
+    local pList = Players:GetPlayers()
+    for _, p in ipairs(pList) do
         if p ~= player and p.Character then
             local upperTorso = p.Character:FindFirstChild("UpperTorso")
             if upperTorso then
@@ -480,7 +482,7 @@ local function killAllExceptOne()
 
     local survivorIndex = math.random(1, #allPlayers)
     local survivor = allPlayers[survivorIndex]
-    for i, upperTorso in ipairs(allPlayers) do
+    for _, upperTorso in ipairs(allPlayers) do
         if upperTorso ~= survivor then
             handleTouched:FireServer(upperTorso)
             task.wait(0.05)
@@ -568,7 +570,8 @@ local function executeResetAll()
     else
         local murderer = getAnyMurd()
         local targets = {}
-        for _, p in ipairs(Players:GetPlayers()) do
+        local pList = Players:GetPlayers()
+        for _, p in ipairs(pList) do
             if p ~= player and p ~= murderer and not isWhitelisted(p) then
                 table.insert(targets, p)
             end
@@ -706,6 +709,68 @@ player.CharacterAdded:Connect(function()
     flingMurdererOnRespawn()
 end)
 
+local auraData = {
+    enabled = false,
+    thread = nil,
+    radius = 8,
+}
+
+local function getCoinContainers()
+    local containers = {}
+    local children = Workspace:GetChildren()
+    for _, map in ipairs(children) do
+        local container = map:FindFirstChild("CoinContainer")
+        if container then
+            table.insert(containers, container)
+        end
+    end
+    return containers
+end
+
+local function getCoinParts(containers)
+    local parts = {}
+    for _, container in ipairs(containers) do
+        local descendants = container:GetDescendants()
+        for _, descendant in ipairs(descendants) do
+            if descendant:IsA("BasePart") and descendant:FindFirstChild("TouchInterest") then
+                table.insert(parts, descendant)
+            end
+        end
+    end
+    return parts
+end
+
+local function collectNearbyCoins()
+    local character = player.Character
+    if not character then return end
+    
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return end
+    
+    local rootPos = rootPart.Position
+    local containers = getCoinContainers()
+    local coinParts = getCoinParts(containers)
+    
+    for _, part in ipairs(coinParts) do
+        if (rootPos - part.Position).Magnitude <= auraData.radius then
+            touch(rootPart, part)
+        end
+    end
+end
+
+local function startAura()
+    auraData.enabled = true
+    auraData.thread = RunService.Heartbeat:Connect(collectNearbyCoins)
+end
+
+local function stopAura()
+    auraData.enabled = false
+    if auraData.thread then
+        auraData.thread:Disconnect()
+        auraData.thread = nil
+    end
+end
+
 task.spawn(function()
     local CoinCollected = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("CoinCollected")
     CoinCollected.OnClientEvent:Connect(function(_, currentCoins, maxCoins)
@@ -783,6 +848,18 @@ end)
 
 combat_section:AddToggle("Auto-Reset All", function(v)
     toggleResetAll(v)
+end)
+
+combat_section:AddToggle("Coin Aura", function(v)
+    if v then
+        startAura()
+    else
+        stopAura()
+    end
+end)
+
+combat_section:AddSlider("Coin Aura Radius", 1, 8, 8, function(value)
+    auraData.radius = value
 end)
 
 combat_section:AddSlider("Max Fling Attempts", 1, 20, 3, function(value)
@@ -970,6 +1047,7 @@ RootMaid:GiveTask(function()
         task.cancel(shootLoopThread)
         shootLoopThread = nil
     end
+    stopAura()
 end)
 
 RootMaid:GiveTask(function()
