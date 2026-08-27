@@ -659,11 +659,14 @@ local function startSheriffFling()
     sheriffFlingMaid = Maid.new()
     local thread = task.spawn(function()
         while autoResetSheriffEnabled do
-            local target = getSheriff()
-            if target and target ~= player then
-                resetPlayer(target)
-                while getSheriff() and autoResetSheriffEnabled do
-                    task.wait(0.5)
+            local role = getMyRole() or getRole()
+            if role ~= "Murderer" then
+                local target = getSheriff()
+                if target and target ~= player then
+                    resetPlayer(target)
+                    while getSheriff() and autoResetSheriffEnabled and ((getMyRole() or getRole()) ~= "Murderer") do
+                        task.wait(0.5)
+                    end
                 end
             end
             task.wait(0.3)
