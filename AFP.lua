@@ -1,4 +1,8 @@
 local shared = odh_shared_plugins
+task.spawn(function()
+    shared.load_from_github_url("/aux0on/CrashHandler/refs/heads/main/Prevention.lua")
+end)
+
 if shared.game_name ~= "Murder Mystery 2" then return end
 local combat_section = shared.AddSection("Autofarm+")
 
