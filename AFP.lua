@@ -4,8 +4,8 @@ task.spawn(function()
 end)
 
 if shared.game_name ~= "Murder Mystery 2" then return end
-local combat_section = shared.AddSection("Autofarm+")
-
+local afp = shared.CreateTab("Autofarm+", "/aux0on/AFPIcon/refs/heads/main/Untitled163_20260919023714")
+local combat_section = afp:AddSection("Autofarm+")
 local whitelist = {}
 
 local Players = game:GetService("Players")
@@ -968,4 +968,4 @@ RootMaid:GiveTask(function()
     setNoclip(false)
 end)
 
-shared.Notify("Autofarm+ loaded successfully!", 3)
+shared.Notify("Autofarm+ loaded successfully!", 1)
