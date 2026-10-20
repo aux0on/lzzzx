@@ -73,49 +73,6 @@ function Maid:Destroy() self:DoCleaning() end
 
 local RootMaid = Maid.new()
 
-local noclipEnabled = false
-
-local function restoreCollision()
-    local character = player.Character
-    if character then
-        for _, part in ipairs(character:GetDescendants()) do
-            if part:IsA("BasePart") then part.CanCollide = true end
-        end
-    end
-end
-
-local function applyNoclipNow()
-    local character = player.Character
-    if character then
-        for _, part in ipairs(character:GetDescendants()) do
-            if part:IsA("BasePart") then
-                part.CanCollide = false
-            end
-        end
-    end
-end
-
-local function setNoclip(state)
-    noclipEnabled = state
-    if not state then
-        restoreCollision()
-    else
-        applyNoclipNow()
-    end
-end
-
-local noclipSteppedConn = RunService.Stepped:Connect(function()
-    if not noclipEnabled then return end
-    local character = player.Character
-    if not character then return end
-    for _, part in ipairs(character:GetDescendants()) do
-        if part:IsA("BasePart") and part.CanCollide then
-            part.CanCollide = false
-        end
-    end
-end)
-RootMaid:GiveTask(noclipSteppedConn)
-
 local roleCache = {
     data      = nil,
     timestamp = 0,
@@ -152,23 +109,18 @@ end
 
 local autoKillAllEnabled = false
 local autoShootMurdEnabled = false
-local autoResetMurdEnabled = false
-local autoResetSheriffEnabled = false
-local resetAllEnabled = false
+local autoFlingMurdererEnabled = false
+local autoFlingSheriffEnabled = false
+local flingAllEnabled = false
 local noRenderEnabled = false
 local autoGGEnabled = false
 
 local afkConnection
-local isResetting = false
-local currentResetConnection = nil
-
-local sheriffFlingMaid = nil
-local resetAllMaid = nil
+local flingAllMaid = nil
 local autoGGMaid = Maid.new()
 RootMaid:GiveTask(autoGGMaid)
 
-local maxFlingAttempts = 3
-local resetAllState = "waiting"
+local flingAllState = "waiting"
 local hasFlingedMurdererThisLife = false
 
 local blackScreenGui = nil
@@ -338,87 +290,151 @@ local function touch(a, b)
     end)
 end
 
-local function fullyRestoreCharacter(character, savedData)
-    if not character or not savedData then return end
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
-    if not humanoid or not rootPart then return end
-    humanoid.PlatformStand = false
-    for _, track in ipairs(humanoid:GetPlayingAnimationTracks()) do track:Stop() end
-    rootPart.AssemblyLinearVelocity = Vector3.zero
-    rootPart.AssemblyAngularVelocity = Vector3.zero
-    rootPart.Velocity = Vector3.zero
-    rootPart.RotVelocity = Vector3.zero
-    rootPart.CFrame = savedData.cframe
-    humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-    for _, part in ipairs(character:GetDescendants()) do
-        if part:IsA("BasePart") then part.CanCollide = true end
-    end
-end
+local ataosFlingActive = true
 
-local function resetPlayer(TargetPlayer)
-    if not TargetPlayer then return end
-    if isResetting then return end
+local function flingPlayer(TargetPlayer, duration)
+    if not TargetPlayer or not TargetPlayer.Parent then return end
+    if isWhitelisted(TargetPlayer) then
+        shared.Notify("Whitelist", TargetPlayer.Name .. " is whitelisted!", 3)
+        return
+    end
 
     local Character = player.Character
-    if not Character then return end
-    local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+    local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
     local RootPart = Humanoid and Humanoid.RootPart
     local TCharacter = TargetPlayer.Character
+
     if not (Character and Humanoid and RootPart and TCharacter) then return end
 
-    local TRootPart = TCharacter:FindFirstChild("HumanoidRootPart")
+    local THumanoid = TCharacter:FindFirstChildOfClass("Humanoid")
+    local TRootPart = THumanoid and THumanoid.RootPart
     local THead = TCharacter:FindFirstChild("Head")
-    if not TRootPart then return end
+    local Accessory = TCharacter:FindFirstChildOfClass("Accessory")
+    local Handle = Accessory and Accessory:FindFirstChild("Handle")
 
-    isResetting = true
+    if RootPart.Velocity.Magnitude < 50 then
+        getgenv().Autofarm_Fling_OldPos = RootPart.CFrame
+    end
 
-    local savedData = { cframe = RootPart.CFrame }
-    Humanoid.PlatformStand = true
+    if THead then
+        workspace.CurrentCamera.CameraSubject = THead
+    elseif not THead and Handle then
+        workspace.CurrentCamera.CameraSubject = Handle
+    elseif THumanoid and TRootPart then
+        workspace.CurrentCamera.CameraSubject = THumanoid
+    end
 
-    local bv = Instance.new("BodyVelocity")
-    bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-    bv.Velocity = Vector3.new(0, -50000, 0)
-    bv.Parent = RootPart
+    if not TCharacter:FindFirstChildWhichIsA("BasePart") then
+        return
+    end
 
-    local bg = Instance.new("BodyGyro")
-    bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-    bg.P = 1000000
-    bg.Parent = RootPart
+    local FPos = function(BasePart, Pos, Ang)
+        RootPart.CFrame = CFrame.new(BasePart.Position) * Pos * Ang
+        Character:SetPrimaryPartCFrame(CFrame.new(BasePart.Position) * Pos * Ang)
+        RootPart.Velocity = Vector3.new(9e7, 9e7 * 10, 9e7)
+        RootPart.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
+    end
 
-    local originalDestroyHeight = Workspace.FallenPartsDestroyHeight
-    Workspace.FallenPartsDestroyHeight = -100000
+    local SFBasePart = function(BasePart)
+        local TimeToWait = duration or 2
+        local Time = tick()
+        local Angle = 0
 
-    local startTime = tick()
-    local resetDuration = 1.5
+        repeat
+            if RootPart and THumanoid then
+                if BasePart.Velocity.Magnitude < 50 then
+                    Angle = Angle + 100
 
-    currentResetConnection = RunService.Heartbeat:Connect(function()
-        if tick() - startTime > resetDuration or not TargetPlayer.Character or not TRootPart.Parent then
-            Workspace.FallenPartsDestroyHeight = originalDestroyHeight
-            bv:Destroy()
-            bg:Destroy()
-            fullyRestoreCharacter(Character, savedData)
-            if currentResetConnection then
-                currentResetConnection:Disconnect()
-                currentResetConnection = nil
+                    FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(2.25, 1.5, -2.25) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(-2.25, -1.5, 2.25) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle), 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle), 0, 0))
+                    task.wait()
+                else
+                    FPos(BasePart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, -1.5, -THumanoid.WalkSpeed), CFrame.Angles(0, 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, 1.5, TRootPart.Velocity.Magnitude / 1.25), CFrame.Angles(math.rad(90), 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, -1.5, -TRootPart.Velocity.Magnitude / 1.25), CFrame.Angles(0, 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, 1.5, TRootPart.Velocity.Magnitude / 1.25), CFrame.Angles(math.rad(90), 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(-90), 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                    task.wait()
+                end
+            else
+                break
             end
-            isResetting = false
-            return
+        until not ataosFlingActive
+            or BasePart.Velocity.Magnitude > 500
+            or BasePart.Parent ~= TargetPlayer.Character
+            or TargetPlayer.Parent ~= Players
+            or (THumanoid and THumanoid.Sit)
+            or tick() > Time + TimeToWait
+    end
+
+    local previousDestroyHeight = workspace.FallenPartsDestroyHeight
+    workspace.FallenPartsDestroyHeight = 0/0
+
+    local BV = Instance.new("BodyVelocity")
+    BV.Name = "Autofarm_Fling_Vel"
+    BV.Parent = RootPart
+    BV.Velocity = Vector3.new(9e8, 9e8, 9e8)
+    BV.MaxForce = Vector3.new(1/0, 1/0, 1/0)
+
+    Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+
+    if TRootPart and THead then
+        if (TRootPart.CFrame.p - THead.CFrame.p).Magnitude > 5 then
+            SFBasePart(THead)
+        else
+            SFBasePart(TRootPart)
         end
+    elseif TRootPart and not THead then
+        SFBasePart(TRootPart)
+    elseif not TRootPart and THead then
+        SFBasePart(THead)
+    elseif not TRootPart and not THead and Accessory and Handle then
+        SFBasePart(Handle)
+    end
 
-        if TRootPart and TRootPart.Parent and Character and Character.Parent then
-            local headPos = THead and THead.Position or (TRootPart.Position + Vector3.new(0, 2.5, 0))
-            RootPart.CFrame = CFrame.new(headPos)
-            RootPart.AssemblyLinearVelocity = Vector3.new(0, -50000, 0)
-            RootPart.AssemblyAngularVelocity = Vector3.new(7500, 7500, 7500)
+    BV:Destroy()
+    Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
+    workspace.CurrentCamera.CameraSubject = Humanoid
 
-            for i = 1, 5 do
-                touch(RootPart, TRootPart)
-                if THead then touch(RootPart, THead) end
+    repeat
+        if Character and Humanoid and RootPart and getgenv().Autofarm_Fling_OldPos then
+            RootPart.CFrame = getgenv().Autofarm_Fling_OldPos * CFrame.new(0, .5, 0)
+            Character:SetPrimaryPartCFrame(getgenv().Autofarm_Fling_OldPos * CFrame.new(0, .5, 0))
+            Humanoid:ChangeState("GettingUp")
+            for _, x in ipairs(Character:GetChildren()) do
+                if x:IsA("BasePart") then
+                    x.Velocity, x.RotVelocity = Vector3.new(), Vector3.new()
+                end
             end
-            pcall(sethiddenproperty, RootPart, "PhysicsRepRootPart", TRootPart)
         end
-    end)
+        task.wait()
+    until not ataosFlingActive
+        or (RootPart and getgenv().Autofarm_Fling_OldPos and (RootPart.Position - getgenv().Autofarm_Fling_OldPos.p).Magnitude < 25)
+
+    workspace.FallenPartsDestroyHeight = previousDestroyHeight
 end
 
 local function killAll()
@@ -566,7 +582,7 @@ local function startShootingMurderer()
     end)
 end
 
-local function executeResetAll()
+local function executeFlingAll()
     local role = getMyRole() or getRole()
 
     if role == "Murderer" then
@@ -582,26 +598,22 @@ local function executeResetAll()
         end
 
         for _, p in ipairs(targets) do
-            resetPlayer(p)
-            while isResetting do
-                task.wait()
-            end
-            task.wait(0.2)
+            flingPlayer(p, 2)
+            task.wait(0.5)
         end
     end
 end
 
-local function startResetAllMonitor()
-    if resetAllMaid then resetAllMaid:Destroy() end
-    resetAllMaid = Maid.new()
-    resetAllState = "waiting"
+local function startFlingAllMonitor()
+    if flingAllMaid then flingAllMaid:Destroy() end
+    flingAllMaid = Maid.new()
+    flingAllState = "waiting"
 
     local thread = task.spawn(function()
-        while resetAllEnabled do
-            setNoclip(true)
+        while flingAllEnabled do
             local role = getMyRole() or getRole()
 
-            if resetAllState == "waiting" then
+            if flingAllState == "waiting" then
                 local shouldRun = false
 
                 if role == "Murderer" then
@@ -615,17 +627,17 @@ local function startResetAllMonitor()
                 end
 
                 if shouldRun then
-                    executeResetAll()
-                    resetAllState = "done"
+                    executeFlingAll()
+                    flingAllState = "done"
                 end
-            elseif resetAllState == "done" then
+            elseif flingAllState == "done" then
                 if role == "Murderer" then
                     if not hasKnife() then
-                        resetAllState = "waiting"
+                        flingAllState = "waiting"
                     end
                 else
                     if not getAnyMurd() then
-                        resetAllState = "waiting"
+                        flingAllState = "waiting"
                     end
                 end
             end
@@ -633,44 +645,37 @@ local function startResetAllMonitor()
             task.wait(0.5)
         end
     end)
-    resetAllMaid:GiveTask(function() task.cancel(thread) end)
+    flingAllMaid:GiveTask(function() task.cancel(thread) end)
 end
 
-local function stopResetAllMonitor()
-    if resetAllMaid then
-        resetAllMaid:Destroy()
-        resetAllMaid = nil
+local function stopFlingAllMonitor()
+    if flingAllMaid then
+        flingAllMaid:Destroy()
+        flingAllMaid = nil
     end
-    resetAllState = "waiting"
+    flingAllState = "waiting"
 end
 
-local function toggleResetAll(enabled)
-    resetAllEnabled = enabled
+local function toggleFlingAll(enabled)
+    flingAllEnabled = enabled
     if enabled then
-        startResetAllMonitor()
+        startFlingAllMonitor()
     else
-        stopResetAllMonitor()
+        stopFlingAllMonitor()
     end
-    updateNoclip()
 end
 
-local function updateNoclip()
-    setNoclip(autoResetSheriffEnabled or autoResetMurdEnabled or resetAllEnabled)
-end
-
-local function startSheriffFling()
+local function startAutoFlingSheriff()
     if sheriffFlingMaid then sheriffFlingMaid:Destroy() end
     sheriffFlingMaid = Maid.new()
     local thread = task.spawn(function()
-        while autoResetSheriffEnabled do
+        while autoFlingSheriffEnabled do
             local role = getMyRole() or getRole()
             if role ~= "Murderer" then
                 local target = getSheriff()
                 if target and target ~= player then
-                    resetPlayer(target)
-                    while getSheriff() and autoResetSheriffEnabled and ((getMyRole() or getRole()) ~= "Murderer") do
-                        task.wait(0.5)
-                    end
+                    flingPlayer(target, 2)
+                    task.wait(3)
                 end
             end
             task.wait(0.3)
@@ -679,12 +684,11 @@ local function startSheriffFling()
             sheriffFlingMaid:Destroy()
             sheriffFlingMaid = nil
         end
-        updateNoclip()
     end)
     sheriffFlingMaid:GiveTask(function() task.cancel(thread) end)
 end
 
-local function stopSheriffFling()
+local function stopAutoFlingSheriff()
     if sheriffFlingMaid then
         sheriffFlingMaid:Destroy()
         sheriffFlingMaid = nil
@@ -692,7 +696,7 @@ local function stopSheriffFling()
 end
 
 local function flingMurdererOnRespawn()
-    if not autoResetMurdEnabled then return end
+    if not autoFlingMurdererEnabled then return end
     if hasFlingedMurdererThisLife then return end
 
     local role = getMyRole() or getRole()
@@ -705,7 +709,7 @@ local function flingMurdererOnRespawn()
     local murd = getMurd()
     if murd then
         task.wait(0.5)
-        resetPlayer(murd)
+        flingPlayer(murd, 2)
         hasFlingedMurdererThisLife = true
     end
 end
@@ -811,12 +815,12 @@ task.spawn(function()
             end
         end
 
-        if role ~= "Murderer" and autoResetMurdEnabled then
+        if role ~= "Murderer" and autoFlingMurdererEnabled then
             if not (autoShootMurdEnabled and hasGun()) then
                 task.spawn(function()
                     task.wait(0.5)
                     local target = getMurd()
-                    if target then resetPlayer(target) end
+                    if target then flingPlayer(target, 2) end
                 end)
             end
         end
@@ -835,26 +839,24 @@ combat_section:AddToggle("Auto-Shoot Murd", function(v)
     autoShootMurdEnabled = v
 end)
 
-combat_section:AddToggle("Auto-Reset Murderer", function(v)
-    autoResetMurdEnabled = v
-    updateNoclip()
+combat_section:AddToggle("Auto-Fling Murderer", function(v)
+    autoFlingMurdererEnabled = v
     if v and player.Character and not hasFlingedMurdererThisLife then
         task.spawn(flingMurdererOnRespawn)
     end
 end)
 
-combat_section:AddToggle("Auto-Reset Sheriff", function(v)
-    autoResetSheriffEnabled = v
+combat_section:AddToggle("Auto-Fling Sheriff", function(v)
+    autoFlingSheriffEnabled = v
     if v then
-        startSheriffFling()
+        startAutoFlingSheriff()
     else
-        stopSheriffFling()
+        stopAutoFlingSheriff()
     end
-    updateNoclip()
 end)
 
-combat_section:AddToggle("Auto-Reset All", function(v)
-    toggleResetAll(v)
+combat_section:AddToggle("Auto-Fling All", function(v)
+    toggleFlingAll(v)
 end)
 
 combat_section:AddToggle("Coin Aura", function(v)
@@ -867,10 +869,6 @@ end)
 
 combat_section:AddSlider("Coin Aura Radius", 1, 8, 8, function(value)
     auraData.radius = value
-end)
-
-combat_section:AddSlider("Max Fling Attempts", 1, 20, 3, function(value)
-    maxFlingAttempts = value
 end)
 
 local function findGunDropPart()
@@ -961,11 +959,9 @@ end)
 
 RootMaid:GiveTask(function()
     CleanupNoRender()
-    if currentResetConnection then currentResetConnection:Disconnect() end
     if sheriffFlingMaid then sheriffFlingMaid:Destroy() end
-    if resetAllMaid then resetAllMaid:Destroy() end
+    if flingAllMaid then flingAllMaid:Destroy() end
     autoGGMaid:DoCleaning()
-    setNoclip(false)
 end)
 
 shared.Notify("Autofarm+ loaded successfully!", 1)
