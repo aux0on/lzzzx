@@ -12,6 +12,9 @@ local Players = game:GetService("Players")
 while not Players.LocalPlayer do task.wait() end
 local player = Players.LocalPlayer
 
+local FLING_DURATION = 0.5
+local FLING_DELAY = 0.5
+
 local trueAntiVoidConnection
 local originalDestroyHeight = workspace.FallenPartsDestroyHeight
 
@@ -116,13 +119,11 @@ local noRenderEnabled = false
 local autoGGEnabled = false
 
 local afkConnection
-local flingAllMaid = nil
-local sheriffFlingMaid = nil
 local autoGGMaid = Maid.new()
 RootMaid:GiveTask(autoGGMaid)
 
-local flingAllState = "waiting"
 local hasFlingedMurdererThisLife = false
+local hasKilledAllExceptOneThisRound = false
 
 local blackScreenGui = nil
 local blackScreenFrame = nil
@@ -278,6 +279,11 @@ local function hasGun()
     return (char and char:FindFirstChild("Gun")) or (bp and bp:FindFirstChild("Gun"))
 end
 
+local function hasGunInBackpack()
+    local bp = player:FindFirstChild("Backpack")
+    return bp ~= nil and bp:FindFirstChild("Gun") ~= nil
+end
+
 local function hasKnife()
     local char = player.Character
     local bp = player:FindFirstChild("Backpack")
@@ -291,10 +297,9 @@ local function touch(a, b)
     end)
 end
 
-local ataosFlingActive = true
-
 local function flingPlayer(TargetPlayer, duration)
     if not TargetPlayer or not TargetPlayer.Parent then return end
+    if TargetPlayer == player then return end
     if isWhitelisted(TargetPlayer) then
         shared.Notify("Whitelist", TargetPlayer.Name .. " is whitelisted!", 3)
         return
@@ -313,129 +318,130 @@ local function flingPlayer(TargetPlayer, duration)
     local Accessory = TCharacter:FindFirstChildOfClass("Accessory")
     local Handle = Accessory and Accessory:FindFirstChild("Handle")
 
+    if not TCharacter:FindFirstChildWhichIsA("BasePart") then return end
+
+    local savedOldPos = nil
     if RootPart.Velocity.Magnitude < 50 then
-        getgenv().Autofarm_Fling_OldPos = RootPart.CFrame
+        savedOldPos = RootPart.CFrame
     end
 
     if THead then
         workspace.CurrentCamera.CameraSubject = THead
-    elseif not THead and Handle then
+    elseif Handle then
         workspace.CurrentCamera.CameraSubject = Handle
     elseif THumanoid and TRootPart then
         workspace.CurrentCamera.CameraSubject = THumanoid
     end
 
-    if not TCharacter:FindFirstChildWhichIsA("BasePart") then
-        return
-    end
-
-    local FPos = function(BasePart, Pos, Ang)
-        RootPart.CFrame = CFrame.new(BasePart.Position) * Pos * Ang
-        Character:SetPrimaryPartCFrame(CFrame.new(BasePart.Position) * Pos * Ang)
-        RootPart.Velocity = Vector3.new(9e7, 9e7 * 10, 9e7)
-        RootPart.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
-    end
-
-    local SFBasePart = function(BasePart)
-        local TimeToWait = duration or 2
-        local Time = tick()
-        local Angle = 0
-
-        repeat
-            if RootPart and THumanoid then
-                if BasePart.Velocity.Magnitude < 50 then
-                    Angle = Angle + 100
-
-                    FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(2.25, 1.5, -2.25) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(-2.25, -1.5, 2.25) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle), 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle), 0, 0))
-                    task.wait()
-                else
-                    FPos(BasePart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, -1.5, -THumanoid.WalkSpeed), CFrame.Angles(0, 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, 1.5, TRootPart.Velocity.Magnitude / 1.25), CFrame.Angles(math.rad(90), 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, -1.5, -TRootPart.Velocity.Magnitude / 1.25), CFrame.Angles(0, 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, 1.5, TRootPart.Velocity.Magnitude / 1.25), CFrame.Angles(math.rad(90), 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(-90), 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
-                    task.wait()
-                end
-            else
-                break
-            end
-        until not ataosFlingActive
-            or BasePart.Velocity.Magnitude > 500
-            or BasePart.Parent ~= TargetPlayer.Character
-            or TargetPlayer.Parent ~= Players
-            or (THumanoid and THumanoid.Sit)
-            or tick() > Time + TimeToWait
-    end
-
     local previousDestroyHeight = workspace.FallenPartsDestroyHeight
-    workspace.FallenPartsDestroyHeight = 0/0
+    local BV = nil
 
-    local BV = Instance.new("BodyVelocity")
-    BV.Name = "Autofarm_Fling_Vel"
-    BV.Parent = RootPart
-    BV.Velocity = Vector3.new(9e8, 9e8, 9e8)
-    BV.MaxForce = Vector3.new(1/0, 1/0, 1/0)
-
-    Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
-
-    if TRootPart and THead then
-        if (TRootPart.CFrame.p - THead.CFrame.p).Magnitude > 5 then
-            SFBasePart(THead)
-        else
-            SFBasePart(TRootPart)
+    local ok, err = pcall(function()
+        local FPos = function(BasePart, Pos, Ang)
+            RootPart.CFrame = CFrame.new(BasePart.Position) * Pos * Ang
+            Character:SetPrimaryPartCFrame(CFrame.new(BasePart.Position) * Pos * Ang)
+            RootPart.Velocity = Vector3.new(9e7, 9e7 * 10, 9e7)
+            RootPart.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
         end
-    elseif TRootPart and not THead then
-        SFBasePart(TRootPart)
-    elseif not TRootPart and THead then
-        SFBasePart(THead)
-    elseif not TRootPart and not THead and Accessory and Handle then
-        SFBasePart(Handle)
-    end
 
-    BV:Destroy()
-    Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
-    workspace.CurrentCamera.CameraSubject = Humanoid
+        local SFBasePart = function(BasePart)
+            local TimeToWait = duration or FLING_DURATION
+            local Time = tick()
+            local Angle = 0
 
-    repeat
-        if Character and Humanoid and RootPart and getgenv().Autofarm_Fling_OldPos then
-            RootPart.CFrame = getgenv().Autofarm_Fling_OldPos * CFrame.new(0, .5, 0)
-            Character:SetPrimaryPartCFrame(getgenv().Autofarm_Fling_OldPos * CFrame.new(0, .5, 0))
+            repeat
+                if RootPart and THumanoid then
+                    if BasePart.Velocity.Magnitude < 50 then
+                        Angle = Angle + 100
+                        FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(2.25, 1.5, -2.25) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(-2.25, -1.5, 2.25) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle), 0, 0))
+                        task.wait()
+                    else
+                        FPos(BasePart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, -THumanoid.WalkSpeed), CFrame.Angles(0, 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, 1.5, TRootPart.Velocity.Magnitude / 1.25), CFrame.Angles(math.rad(90), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, -TRootPart.Velocity.Magnitude / 1.25), CFrame.Angles(0, 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, 1.5, TRootPart.Velocity.Magnitude / 1.25), CFrame.Angles(math.rad(90), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(-90), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                        task.wait()
+                    end
+                else
+                    break
+                end
+            until BasePart.Velocity.Magnitude > 500
+                or BasePart.Parent ~= TargetPlayer.Character
+                or TargetPlayer.Parent ~= Players
+                or (THumanoid and THumanoid.Sit)
+                or tick() > Time + TimeToWait
+        end
+
+        workspace.FallenPartsDestroyHeight = 0/0
+
+        BV = Instance.new("BodyVelocity")
+        BV.Name = "Autofarm_Fling_Vel"
+        BV.Parent = RootPart
+        BV.Velocity = Vector3.new(9e8, 9e8, 9e8)
+        BV.MaxForce = Vector3.new(1/0, 1/0, 1/0)
+
+        Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+
+        if TRootPart and THead then
+            if (TRootPart.CFrame.p - THead.CFrame.p).Magnitude > 5 then
+                SFBasePart(THead)
+            else
+                SFBasePart(TRootPart)
+            end
+        elseif TRootPart and not THead then
+            SFBasePart(TRootPart)
+        elseif not TRootPart and THead then
+            SFBasePart(THead)
+        elseif not TRootPart and not THead and Accessory and Handle then
+            SFBasePart(Handle)
+        end
+    end)
+
+    if BV then pcall(function() BV:Destroy() end) end
+    pcall(function() Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true) end)
+    pcall(function() workspace.CurrentCamera.CameraSubject = Humanoid end)
+    workspace.FallenPartsDestroyHeight = previousDestroyHeight
+
+    if savedOldPos and Character and Humanoid and RootPart and RootPart.Parent then
+        local restoreDeadline = tick() + 1.5
+        repeat
+            RootPart.CFrame = savedOldPos * CFrame.new(0, .5, 0)
+            Character:SetPrimaryPartCFrame(savedOldPos * CFrame.new(0, .5, 0))
             Humanoid:ChangeState("GettingUp")
             for _, x in ipairs(Character:GetChildren()) do
                 if x:IsA("BasePart") then
                     x.Velocity, x.RotVelocity = Vector3.new(), Vector3.new()
                 end
             end
-        end
-        task.wait()
-    until not ataosFlingActive
-        or (RootPart and getgenv().Autofarm_Fling_OldPos and (RootPart.Position - getgenv().Autofarm_Fling_OldPos.p).Magnitude < 25)
-
-    workspace.FallenPartsDestroyHeight = previousDestroyHeight
+            task.wait()
+        until (RootPart.Position - savedOldPos.p).Magnitude < 25
+            or tick() > restoreDeadline
+    end
 end
 
 local function killAll()
@@ -583,128 +589,124 @@ local function startShootingMurderer()
     end)
 end
 
+local function tryKillAllExceptOne()
+    if hasKilledAllExceptOneThisRound then return end
+    if not hasKnife() then
+        for _ = 1, 20 do
+            task.wait(0.1)
+            if hasKnife() then break end
+        end
+    end
+    if hasKnife() and not hasKilledAllExceptOneThisRound then
+        hasKilledAllExceptOneThisRound = true
+        killAllExceptOne()
+    end
+end
+
 local function executeFlingAll()
     local role = getMyRole() or getRole()
 
     if role == "Murderer" then
-        killAllExceptOne()
-    else
-        local murderer = nil
-        for _ = 1, 6 do
-            murderer = getAnyMurd()
-            if murderer then break end
-            task.wait(0.5)
+        tryKillAllExceptOne()
+        return
+    end
+
+    local murderer = getAnyMurd()
+    local targets = {}
+    local pList = Players:GetPlayers()
+    for _, p in ipairs(pList) do
+        if p ~= player and p ~= murderer and not isWhitelisted(p) then
+            table.insert(targets, p)
+        end
+    end
+
+    for i, p in ipairs(targets) do
+        if not flingAllEnabled then return end
+        flingPlayer(p, FLING_DURATION)
+        if i < #targets then
+            task.wait(FLING_DELAY)
+        end
+    end
+end
+
+local roundStartListeners = {}
+local roundActive = false
+
+local function addRoundStartListener(fn)
+    table.insert(roundStartListeners, fn)
+end
+
+local roundMonitorThread = task.spawn(function()
+    task.wait(1)
+    do
+        local role = getMyRole()
+        roundActive = (role == "Murderer") or hasKnife() or (getAnyMurd() ~= nil)
+    end
+
+    while true do
+        local active = false
+        if getMyRole() == "Murderer" then
+            active = true
+        elseif hasKnife() then
+            active = true
+        elseif getAnyMurd() ~= nil then
+            active = true
         end
 
-        local targets = {}
-        local pList = Players:GetPlayers()
-        for _, p in ipairs(pList) do
-            if p ~= player and p ~= murderer and not isWhitelisted(p) then
-                table.insert(targets, p)
+        if active and not roundActive then
+            roundActive = true
+            for _, fn in ipairs(roundStartListeners) do
+                task.spawn(function()
+                    local ok, err = pcall(fn)
+                    if not ok then warn("[Autofarm+] RoundStart listener error: " .. tostring(err)) end
+                end)
             end
+        elseif not active and roundActive then
+            roundActive = false
         end
 
-        for _, p in ipairs(targets) do
-            flingPlayer(p, 2)
-            task.wait(0.5)
-        end
+        task.wait(0.5)
     end
-end
+end)
+RootMaid:GiveTask(function() task.cancel(roundMonitorThread) end)
 
-local function startFlingAllMonitor()
-    if flingAllMaid then flingAllMaid:Destroy() end
-    flingAllMaid = Maid.new()
-    flingAllState = "waiting"
+addRoundStartListener(function()
+    hasFlingedMurdererThisLife = false
+    hasKilledAllExceptOneThisRound = false
+end)
 
-    local thread = task.spawn(function()
-        while flingAllEnabled do
-            local role = getMyRole() or getRole()
+addRoundStartListener(function()
+    if not flingAllEnabled then return end
+    task.wait(1)
+    if not flingAllEnabled then return end
+    executeFlingAll()
+end)
 
-            if flingAllState == "waiting" then
-                local shouldRun = false
+addRoundStartListener(function()
+    if not autoKillAllEnabled then return end
+    local role = getMyRole() or getRole()
+    if role ~= "Murderer" then return end
+    task.wait(1)
+    if not autoKillAllEnabled then return end
+    if (getMyRole() or getRole()) ~= "Murderer" then return end
+    tryKillAllExceptOne()
+end)
 
-                if role == "Murderer" then
-                    if hasKnife() then
-                        shouldRun = true
-                    end
-                else
-                    if getAnyMurd() then
-                        shouldRun = true
-                    end
-                end
-
-                if shouldRun then
-                    executeFlingAll()
-                    flingAllState = "done"
-                end
-            elseif flingAllState == "done" then
-                if role == "Murderer" then
-                    if not hasKnife() then
-                        flingAllState = "waiting"
-                    end
-                else
-                    if not getAnyMurd() then
-                        flingAllState = "waiting"
-                    end
-                end
-            end
-
-            task.wait(0.5)
-        end
-    end)
-    flingAllMaid:GiveTask(function() task.cancel(thread) end)
-end
-
-local function stopFlingAllMonitor()
-    if flingAllMaid then
-        flingAllMaid:Destroy()
-        flingAllMaid = nil
+addRoundStartListener(function()
+    if not autoFlingSheriffEnabled then return end
+    if flingAllEnabled then return end
+    task.wait(1)
+    if not autoFlingSheriffEnabled or flingAllEnabled then return end
+    local target = getSheriff()
+    if target then
+        flingPlayer(target, FLING_DURATION)
     end
-    flingAllState = "waiting"
-end
-
-local function toggleFlingAll(enabled)
-    flingAllEnabled = enabled
-    if enabled then
-        startFlingAllMonitor()
-    else
-        stopFlingAllMonitor()
-    end
-end
-
-local function startAutoFlingSheriff()
-    if sheriffFlingMaid then sheriffFlingMaid:Destroy() end
-    sheriffFlingMaid = Maid.new()
-    local thread = task.spawn(function()
-        while autoFlingSheriffEnabled do
-            local role = getMyRole() or getRole()
-            if role ~= "Murderer" then
-                local target = getSheriff()
-                if target and target ~= player then
-                    flingPlayer(target, 2)
-                    task.wait(3)
-                end
-            end
-            task.wait(0.3)
-        end
-        if sheriffFlingMaid then
-            sheriffFlingMaid:Destroy()
-            sheriffFlingMaid = nil
-        end
-    end)
-    sheriffFlingMaid:GiveTask(function() task.cancel(thread) end)
-end
-
-local function stopAutoFlingSheriff()
-    if sheriffFlingMaid then
-        sheriffFlingMaid:Destroy()
-        sheriffFlingMaid = nil
-    end
-end
+end)
 
 local function flingMurdererOnRespawn()
     if not autoFlingMurdererEnabled then return end
     if hasFlingedMurdererThisLife then return end
+    if autoShootMurdEnabled and hasGunInBackpack() then return end
 
     local role = getMyRole() or getRole()
     if role == "Murderer" then return end
@@ -712,7 +714,7 @@ local function flingMurdererOnRespawn()
     local murd = getMurd()
     if murd then
         task.wait(0.5)
-        flingPlayer(murd, 2)
+        flingPlayer(murd, FLING_DURATION)
         hasFlingedMurdererThisLife = true
     end
 end
@@ -818,17 +820,15 @@ task.spawn(function()
             end
         end
 
-        if role ~= "Murderer" and autoFlingMurdererEnabled then
+        if role ~= "Murderer" and autoFlingMurdererEnabled and not hasFlingedMurdererThisLife then
             task.spawn(function()
-                for attempt = 1, 6 do
-                    task.wait(0.5)
-                    if not autoFlingMurdererEnabled then return end
-                    local target = getMurd()
-                    if target then
-                        flingPlayer(target, 2)
-                        hasFlingedMurdererThisLife = true
-                        return
-                    end
+                task.wait(1)
+                if not autoFlingMurdererEnabled then return end
+                if autoShootMurdEnabled and hasGunInBackpack() then return end
+                local target = getMurd()
+                if target then
+                    flingPlayer(target, FLING_DURATION)
+                    hasFlingedMurdererThisLife = true
                 end
             end)
         end
@@ -841,6 +841,16 @@ end)
 
 combat_section:AddToggle("Auto-Kill All", function(v)
     autoKillAllEnabled = v
+    if v then
+        task.spawn(function()
+            task.wait(0.2)
+            if not autoKillAllEnabled then return end
+            local role = getMyRole() or getRole()
+            if role == "Murderer" then
+                tryKillAllExceptOne()
+            end
+        end)
+    end
 end)
 
 combat_section:AddToggle("Auto-Shoot Murd", function(v)
@@ -856,15 +866,19 @@ end)
 
 combat_section:AddToggle("Auto-Fling Sheriff", function(v)
     autoFlingSheriffEnabled = v
-    if v then
-        startAutoFlingSheriff()
-    else
-        stopAutoFlingSheriff()
-    end
 end)
 
 combat_section:AddToggle("Auto-Fling All", function(v)
-    toggleFlingAll(v)
+    flingAllEnabled = v
+    if v then
+        task.spawn(function()
+            task.wait(0.2)
+            if not flingAllEnabled then return end
+            if roundActive then
+                executeFlingAll()
+            end
+        end)
+    end
 end)
 
 combat_section:AddToggle("Coin Aura", function(v)
@@ -967,8 +981,6 @@ end)
 
 RootMaid:GiveTask(function()
     CleanupNoRender()
-    if sheriffFlingMaid then sheriffFlingMaid:Destroy() end
-    if flingAllMaid then flingAllMaid:Destroy() end
     autoGGMaid:DoCleaning()
 end)
 
