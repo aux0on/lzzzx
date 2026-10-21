@@ -12,8 +12,9 @@ local Players = game:GetService("Players")
 while not Players.LocalPlayer do task.wait() end
 local player = Players.LocalPlayer
 
-local FLING_DURATION = 0.5
+local FLING_DURATION = 2
 local FLING_DELAY = 0.5
+local MAX_FLING_ATTEMPTS = 3
 
 local trueAntiVoidConnection
 local originalDestroyHeight = workspace.FallenPartsDestroyHeight
@@ -123,6 +124,8 @@ local autoGGMaid = Maid.new()
 RootMaid:GiveTask(autoGGMaid)
 
 local hasFlingedMurdererThisLife = false
+local hasFlingedSheriffThisRound = false
+local hasFlingedAllThisRound = false
 local hasKilledAllExceptOneThisRound = false
 
 local blackScreenGui = nil
@@ -277,11 +280,6 @@ local function hasGun()
     local char = player.Character
     local bp = player:FindFirstChild("Backpack")
     return (char and char:FindFirstChild("Gun")) or (bp and bp:FindFirstChild("Gun"))
-end
-
-local function hasGunInBackpack()
-    local bp = player:FindFirstChild("Backpack")
-    return bp ~= nil and bp:FindFirstChild("Gun") ~= nil
 end
 
 local function hasKnife()
@@ -441,6 +439,27 @@ local function flingPlayer(TargetPlayer, duration)
             task.wait()
         until (RootPart.Position - savedOldPos.p).Magnitude < 25
             or tick() > restoreDeadline
+    end
+end
+
+local function flingWithAttempts(getter)
+    for attempt = 1, MAX_FLING_ATTEMPTS do
+        local target = getter()
+        if not target or not target.Parent then
+            if attempt < MAX_FLING_ATTEMPTS then
+                task.wait(FLING_DELAY)
+            end
+        else
+            local tChar = target.Character
+            local thum = tChar and tChar:FindFirstChildOfClass("Humanoid")
+            if not thum or thum.Health <= 0 then
+                return
+            end
+            flingPlayer(target, FLING_DURATION)
+            if attempt < MAX_FLING_ATTEMPTS then
+                task.wait(FLING_DELAY)
+            end
+        end
     end
 end
 
@@ -604,6 +623,9 @@ local function tryKillAllExceptOne()
 end
 
 local function executeFlingAll()
+    if hasFlingedAllThisRound then return end
+    hasFlingedAllThisRound = true
+
     local role = getMyRole() or getRole()
 
     if role == "Murderer" then
@@ -671,14 +693,11 @@ end)
 RootMaid:GiveTask(function() task.cancel(roundMonitorThread) end)
 
 addRoundStartListener(function()
-    hasFlingedMurdererThisLife = false
-    hasKilledAllExceptOneThisRound = false
-end)
-
-addRoundStartListener(function()
     if not flingAllEnabled then return end
+    if hasFlingedAllThisRound then return end
     task.wait(1)
     if not flingAllEnabled then return end
+    if hasFlingedAllThisRound then return end
     executeFlingAll()
 end)
 
@@ -695,32 +714,32 @@ end)
 addRoundStartListener(function()
     if not autoFlingSheriffEnabled then return end
     if flingAllEnabled then return end
+    if hasFlingedSheriffThisRound then return end
     task.wait(1)
     if not autoFlingSheriffEnabled or flingAllEnabled then return end
-    local target = getSheriff()
-    if target then
-        flingPlayer(target, FLING_DURATION)
-    end
+    if hasFlingedSheriffThisRound then return end
+    hasFlingedSheriffThisRound = true
+    flingWithAttempts(getSheriff)
 end)
 
 local function flingMurdererOnRespawn()
     if not autoFlingMurdererEnabled then return end
     if hasFlingedMurdererThisLife then return end
-    if autoShootMurdEnabled and hasGunInBackpack() then return end
+    if autoShootMurdEnabled and hasGun() then return end
 
     local role = getMyRole() or getRole()
     if role == "Murderer" then return end
 
-    local murd = getMurd()
-    if murd then
-        task.wait(0.5)
-        flingPlayer(murd, FLING_DURATION)
-        hasFlingedMurdererThisLife = true
-    end
+    hasFlingedMurdererThisLife = true
+    task.wait(0.5)
+    flingWithAttempts(getMurd)
 end
 
 player.CharacterAdded:Connect(function()
     hasFlingedMurdererThisLife = false
+    hasFlingedSheriffThisRound = false
+    hasFlingedAllThisRound = false
+    hasKilledAllExceptOneThisRound = false
     task.wait(1.5)
     flingMurdererOnRespawn()
 end)
@@ -799,36 +818,35 @@ task.spawn(function()
             return
         end
 
-        if autoShootMurdEnabled then
-            if hasGun() then
-                startShootingMurderer()
-            else
-                if shootLoopThread then
-                    task.cancel(shootLoopThread)
-                    shootLoopThread = nil
-                end
-                shootLoopThread = task.spawn(function()
-                    while player.Character and not hasGun() do
-                        task.wait(0.5)
-                    end
-                    if player.Character and hasGun() then
-                        startShootingMurderer()
-                    else
-                        shootLoopThread = nil
-                    end
-                end)
-            end
-        end
+        if role == "Murderer" then return end
 
-        if role ~= "Murderer" and autoFlingMurdererEnabled and not hasFlingedMurdererThisLife then
+        if autoShootMurdEnabled and hasGun() then
+            startShootingMurderer()
+        elseif autoFlingMurdererEnabled and not hasFlingedMurdererThisLife then
             task.spawn(function()
                 task.wait(1)
                 if not autoFlingMurdererEnabled then return end
-                if autoShootMurdEnabled and hasGunInBackpack() then return end
-                local target = getMurd()
-                if target then
-                    flingPlayer(target, FLING_DURATION)
-                    hasFlingedMurdererThisLife = true
+                if hasFlingedMurdererThisLife then return end
+                if autoShootMurdEnabled and hasGun() then
+                    startShootingMurderer()
+                    return
+                end
+                hasFlingedMurdererThisLife = true
+                flingWithAttempts(getMurd)
+            end)
+        elseif autoShootMurdEnabled then
+            if shootLoopThread then
+                task.cancel(shootLoopThread)
+                shootLoopThread = nil
+            end
+            shootLoopThread = task.spawn(function()
+                while player.Character and not hasGun() do
+                    task.wait(0.5)
+                end
+                if player.Character and hasGun() then
+                    startShootingMurderer()
+                else
+                    shootLoopThread = nil
                 end
             end)
         end
@@ -866,17 +884,26 @@ end)
 
 combat_section:AddToggle("Auto-Fling Sheriff", function(v)
     autoFlingSheriffEnabled = v
+    if v and roundActive and not hasFlingedSheriffThisRound and not flingAllEnabled then
+        task.spawn(function()
+            task.wait(0.2)
+            if not autoFlingSheriffEnabled then return end
+            if flingAllEnabled then return end
+            if hasFlingedSheriffThisRound then return end
+            hasFlingedSheriffThisRound = true
+            flingWithAttempts(getSheriff)
+        end)
+    end
 end)
 
 combat_section:AddToggle("Auto-Fling All", function(v)
     flingAllEnabled = v
-    if v then
+    if v and roundActive and not hasFlingedAllThisRound then
         task.spawn(function()
             task.wait(0.2)
             if not flingAllEnabled then return end
-            if roundActive then
-                executeFlingAll()
-            end
+            if hasFlingedAllThisRound then return end
+            executeFlingAll()
         end)
     end
 end)
