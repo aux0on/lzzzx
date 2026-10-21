@@ -127,6 +127,7 @@ local hasFlingedMurdererThisLife = false
 local hasFlingedSheriffThisRound = false
 local hasFlingedAllThisRound = false
 local hasKilledAllExceptOneThisRound = false
+local isKillingAllExceptOnePending = false
 
 local blackScreenGui = nil
 local blackScreenFrame = nil
@@ -451,20 +452,17 @@ end
 local function flingWithAttempts(getter)
     for attempt = 1, MAX_FLING_ATTEMPTS do
         local target = getter()
-        if not target or not target.Parent then
-            if attempt < MAX_FLING_ATTEMPTS then
-                task.wait(FLING_DELAY)
-            end
-        else
+        if target and target.Parent then
             local tChar = target.Character
             local thum = tChar and tChar:FindFirstChildOfClass("Humanoid")
             if not thum or thum.Health <= 0 then
                 return
             end
             flingPlayer(target, FLING_DURATION)
-            if attempt < MAX_FLING_ATTEMPTS then
-                task.wait(FLING_DELAY)
-            end
+            return
+        end
+        if attempt < MAX_FLING_ATTEMPTS then
+            task.wait(FLING_DELAY)
         end
     end
 end
@@ -498,13 +496,13 @@ end
 
 local function killAllExceptOne()
     local character = player.Character
-    if not character then return end
+    if not character then return false end
     local knife = character:FindFirstChild("Knife") or (player.Backpack and player.Backpack:FindFirstChild("Knife"))
-    if not knife then return end
+    if not knife then return false end
     local events = knife:FindFirstChild("Events")
-    if not events then return end
+    if not events then return false end
     local handleTouched = events:FindFirstChild("HandleTouched")
-    if not handleTouched then return end
+    if not handleTouched then return false end
 
     local allPlayers = {}
     local whitelistedPlayers = {}
@@ -523,14 +521,15 @@ local function killAllExceptOne()
     end
 
     if #whitelistedPlayers > 0 then
+        if #allPlayers == 0 then return false end
         for _, upperTorso in ipairs(allPlayers) do
             handleTouched:FireServer(upperTorso)
             task.wait(0.05)
         end
-        return
+        return true
     end
 
-    if #allPlayers == 0 then return end
+    if #allPlayers < 2 then return false end
 
     local survivorIndex = math.random(1, #allPlayers)
     local survivor = allPlayers[survivorIndex]
@@ -540,6 +539,7 @@ local function killAllExceptOne()
             task.wait(0.05)
         end
     end
+    return true
 end
 
 local function equipGun()
@@ -616,16 +616,28 @@ end
 
 local function tryKillAllExceptOne()
     if hasKilledAllExceptOneThisRound then return end
-    if not hasKnife() then
-        for _ = 1, 50 do
-            task.wait(0.1)
-            if hasKnife() then break end
+    if isKillingAllExceptOnePending then return end
+    isKillingAllExceptOnePending = true
+
+    local ok, err = pcall(function()
+        if not hasKnife() then
+            for _ = 1, 50 do
+                task.wait(0.1)
+                if hasKnife() then break end
+            end
         end
-    end
-    if hasKnife() and not hasKilledAllExceptOneThisRound then
-        hasKilledAllExceptOneThisRound = true
-        killAllExceptOne()
-    end
+        if not hasKnife() then return end
+
+        for _ = 1, 20 do
+            if killAllExceptOne() then
+                hasKilledAllExceptOneThisRound = true
+                return
+            end
+            task.wait(0.5)
+        end
+    end)
+    if not ok then warn("[Autofarm+] tryKillAllExceptOne error: " .. tostring(err)) end
+    isKillingAllExceptOnePending = false
 end
 
 local function executeFlingAll()
@@ -673,10 +685,7 @@ end
 
 local roundMonitorThread = task.spawn(function()
     task.wait(1)
-    do
-        local role = getMyRole()
-        roundActive = (role == "Murderer") or hasKnife() or (getAnyMurd() ~= nil)
-    end
+    roundActive = false
 
     while true do
         local active = false
@@ -738,9 +747,7 @@ local function flingMurdererOnRespawn()
     if not autoFlingMurdererEnabled then return end
     if hasFlingedMurdererThisLife then return end
     if autoShootMurdEnabled and hasGun() then return end
-
-    local role = getMyRole() or getRole()
-    if role == "Murderer" then return end
+    if isLocalMurderer() then return end
 
     hasFlingedMurdererThisLife = true
     task.wait(0.5)
@@ -752,6 +759,7 @@ player.CharacterAdded:Connect(function()
     hasFlingedSheriffThisRound = false
     hasFlingedAllThisRound = false
     hasKilledAllExceptOneThisRound = false
+    isKillingAllExceptOnePending = false
     task.wait(1.5)
     flingMurdererOnRespawn()
 end)
@@ -823,27 +831,25 @@ task.spawn(function()
     CoinCollected.OnClientEvent:Connect(function(_, currentCoins, maxCoins)
         if currentCoins < maxCoins then return end
 
-        local role = getMyRole() or getRole()
+        local isMurderer = isLocalMurderer()
 
-        if role == "Murderer" and autoKillAllEnabled then
+        if isMurderer and autoKillAllEnabled then
             task.spawn(killAll)
             return
         end
 
-        if role == "Murderer" then return end
+        if isMurderer then return end
 
         if autoShootMurdEnabled and hasGun() then
             startShootingMurderer()
-        elseif autoFlingMurdererEnabled and not hasFlingedMurdererThisLife then
+        elseif autoFlingMurdererEnabled then
             task.spawn(function()
                 task.wait(1)
                 if not autoFlingMurdererEnabled then return end
-                if hasFlingedMurdererThisLife then return end
                 if autoShootMurdEnabled and hasGun() then
                     startShootingMurderer()
                     return
                 end
-                hasFlingedMurdererThisLife = true
                 flingWithAttempts(getMurd)
             end)
         elseif autoShootMurdEnabled then
@@ -875,8 +881,7 @@ combat_section:AddToggle("Auto-Kill All", function(v)
         task.spawn(function()
             task.wait(0.2)
             if not autoKillAllEnabled then return end
-            local role = getMyRole() or getRole()
-            if role == "Murderer" then
+            if isLocalMurderer() then
                 tryKillAllExceptOne()
             end
         end)
