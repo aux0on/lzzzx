@@ -288,6 +288,12 @@ local function hasKnife()
     return (char and char:FindFirstChild("Knife")) or (bp and bp:FindFirstChild("Knife"))
 end
 
+local function isLocalMurderer()
+    if hasKnife() then return true end
+    if getMyRole() == "Murderer" then return true end
+    return false
+end
+
 local function touch(a, b)
     pcall(function()
         firetouchinterest(a, b, 0)
@@ -611,7 +617,7 @@ end
 local function tryKillAllExceptOne()
     if hasKilledAllExceptOneThisRound then return end
     if not hasKnife() then
-        for _ = 1, 20 do
+        for _ = 1, 50 do
             task.wait(0.1)
             if hasKnife() then break end
         end
@@ -624,11 +630,18 @@ end
 
 local function executeFlingAll()
     if hasFlingedAllThisRound then return end
+
+    if not isLocalMurderer() then
+        for _ = 1, 30 do
+            if isLocalMurderer() then break end
+            if getAnyMurd() ~= nil then break end
+            task.wait(0.1)
+        end
+    end
+
     hasFlingedAllThisRound = true
 
-    local role = getMyRole() or getRole()
-
-    if role == "Murderer" then
+    if isLocalMurderer() then
         tryKillAllExceptOne()
         return
     end
@@ -677,6 +690,8 @@ local roundMonitorThread = task.spawn(function()
 
         if active and not roundActive then
             roundActive = true
+            roleCache.data = nil
+            roleCache.timestamp = 0
             for _, fn in ipairs(roundStartListeners) do
                 task.spawn(function()
                     local ok, err = pcall(fn)
@@ -703,11 +718,8 @@ end)
 
 addRoundStartListener(function()
     if not autoKillAllEnabled then return end
-    local role = getMyRole() or getRole()
-    if role ~= "Murderer" then return end
     task.wait(1)
     if not autoKillAllEnabled then return end
-    if (getMyRole() or getRole()) ~= "Murderer" then return end
     tryKillAllExceptOne()
 end)
 
