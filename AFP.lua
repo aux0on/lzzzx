@@ -117,6 +117,7 @@ local autoGGEnabled = false
 
 local afkConnection
 local flingAllMaid = nil
+local sheriffFlingMaid = nil
 local autoGGMaid = Maid.new()
 RootMaid:GiveTask(autoGGMaid)
 
@@ -588,7 +589,13 @@ local function executeFlingAll()
     if role == "Murderer" then
         killAllExceptOne()
     else
-        local murderer = getAnyMurd()
+        local murderer = nil
+        for _ = 1, 6 do
+            murderer = getAnyMurd()
+            if murderer then break end
+            task.wait(0.5)
+        end
+
         local targets = {}
         local pList = Players:GetPlayers()
         for _, p in ipairs(pList) do
@@ -702,10 +709,6 @@ local function flingMurdererOnRespawn()
     local role = getMyRole() or getRole()
     if role == "Murderer" then return end
 
-    if autoShootMurdEnabled and hasGun() then
-        return
-    end
-
     local murd = getMurd()
     if murd then
         task.wait(0.5)
@@ -816,13 +819,18 @@ task.spawn(function()
         end
 
         if role ~= "Murderer" and autoFlingMurdererEnabled then
-            if not (autoShootMurdEnabled and hasGun()) then
-                task.spawn(function()
+            task.spawn(function()
+                for attempt = 1, 6 do
                     task.wait(0.5)
+                    if not autoFlingMurdererEnabled then return end
                     local target = getMurd()
-                    if target then flingPlayer(target, 2) end
-                end)
-            end
+                    if target then
+                        flingPlayer(target, 2)
+                        hasFlingedMurdererThisLife = true
+                        return
+                    end
+                end
+            end)
         end
     end)
 end)
