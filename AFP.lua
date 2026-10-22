@@ -324,10 +324,22 @@ local function hasGun()
     return (char and char:FindFirstChild("Gun")) or (bp and bp:FindFirstChild("Gun"))
 end
 
-local function hasKnife()
+local function getKnife()
     local char = player.Character
+    if char then
+        local k = char:FindFirstChild("Knife")
+        if k then return k end
+    end
     local bp = player:FindFirstChild("Backpack")
-    return (char and char:FindFirstChild("Knife")) or (bp and bp:FindFirstChild("Knife"))
+    if bp then
+        local k = bp:FindFirstChild("Knife")
+        if k then return k end
+    end
+    return nil
+end
+
+local function hasKnife()
+    return getKnife() ~= nil
 end
 
 local function touch(a, b)
@@ -461,42 +473,13 @@ local function resetPlayer(TargetPlayer, attempts)
     end
 end
 
-local function killAll()
-    local character = player.Character
-    if not character then return end
-    local knife = character:FindFirstChild("Knife") or (player.Backpack and player.Backpack:FindFirstChild("Knife"))
-    if not knife then return end
-    local events = knife:FindFirstChild("Events")
-    if not events then return end
-    local handleTouched = events:FindFirstChild("HandleTouched")
-    if not handleTouched then return end
-
-    local targets = {}
-    local pList = Players:GetPlayers()
-    for _, p in ipairs(pList) do
-        if p ~= player and p.Character and not isWhitelisted(p) then
-            local upperTorso = p.Character:FindFirstChild("UpperTorso")
-            if upperTorso then table.insert(targets, upperTorso) end
-        end
-    end
-
-    for i = 1, 3 do
-        for _, upperTorso in ipairs(targets) do
-            handleTouched:FireServer(upperTorso)
-        end
-        if i < 3 then task.wait(1) end
-    end
-end
-
 local function killAllExceptOne()
-    local character = player.Character
-    if not character then return end
-    local knife = character:FindFirstChild("Knife") or (player.Backpack and player.Backpack:FindFirstChild("Knife"))
-    if not knife then return end
+    local knife = getKnife()
+    if not knife then return false end
     local events = knife:FindFirstChild("Events")
-    if not events then return end
+    if not events then return false end
     local handleTouched = events:FindFirstChild("HandleTouched")
-    if not handleTouched then return end
+    if not handleTouched then return false end
 
     local allPlayers = {}
     local whitelistedPlayers = {}
@@ -519,10 +502,10 @@ local function killAllExceptOne()
             handleTouched:FireServer(upperTorso)
             task.wait(0.05)
         end
-        return
+        return true
     end
 
-    if #allPlayers == 0 then return end
+    if #allPlayers == 0 then return false end
 
     local survivorIndex = math.random(1, #allPlayers)
     local survivor = allPlayers[survivorIndex]
@@ -532,6 +515,7 @@ local function killAllExceptOne()
             task.wait(0.05)
         end
     end
+    return true
 end
 
 local function equipGun()
@@ -610,7 +594,14 @@ local function executeResetAll()
     local role = getMyRole() or getRole()
 
     if role == "Murderer" then
-        killAllExceptOne()
+        -- Wait until knife is available in backpack/character
+        local timeout = tick() + 15
+        while tick() < timeout and not hasKnife() do
+            task.wait(0.1)
+        end
+        if hasKnife() then
+            killAllExceptOne()
+        end
     else
         local murderer = getAnyMurd()
         local pList = Players:GetPlayers()
@@ -619,7 +610,7 @@ local function executeResetAll()
                 local tChar = p.Character
                 local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
                 if tHum and tHum.Health > 0 then
-                    resetPlayer(p, 1) -- Hardcoded to 1 attempt for reset all
+                    resetPlayer(p, 1) -- 1 attempt for reset all
                     task.wait(0.2)
                 end
             end
@@ -706,7 +697,7 @@ local function startSheriffFling()
             if role ~= "Murderer" then
                 local target = getSheriff()
                 if target and target ~= player then
-                    resetPlayer(target, 3) -- Hardcoded to 3 attempts for Sheriff
+                    resetPlayer(target, 3) -- 3 attempts for Sheriff
                     while getSheriff() and autoResetSheriffEnabled and ((getMyRole() or getRole()) ~= "Murderer") do
                         task.wait(0.5)
                     end
@@ -745,7 +736,7 @@ local function flingMurdererOnRespawn()
     local murd = getMurd()
     if murd then
         task.wait(0.5)
-        resetPlayer(murd, 3) -- Hardcoded to 3 attempts for Murderer
+        resetPlayer(murd, 3) -- 3 attempts for Murderer
         hasFlingedMurdererThisLife = true
     end
 end
@@ -826,7 +817,15 @@ task.spawn(function()
         local role = getMyRole() or getRole()
 
         if role == "Murderer" and autoKillAllEnabled then
-            task.spawn(killAll)
+            task.spawn(function()
+                local timeout = tick() + 15
+                while tick() < timeout and not hasKnife() do
+                    task.wait(0.1)
+                end
+                if hasKnife() then
+                    killAllExceptOne()
+                end
+            end)
             return
         end
 
@@ -869,6 +868,24 @@ end)
 
 combat_section:AddToggle("Auto-Kill All", function(v)
     autoKillAllEnabled = v
+    if v then
+        task.spawn(function()
+            while autoKillAllEnabled do
+                local role = getMyRole() or getRole()
+                if role == "Murderer" then
+                    local timeout = tick() + 15
+                    while tick() < timeout and autoKillAllEnabled and not hasKnife() do
+                        task.wait(0.1)
+                    end
+                    if hasKnife() and autoKillAllEnabled then
+                        killAllExceptOne()
+                        break
+                    end
+                end
+                task.wait(0.5)
+            end
+        end)
+    end
 end)
 
 combat_section:AddToggle("Auto-Shoot Murd", function(v)
