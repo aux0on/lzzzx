@@ -482,33 +482,21 @@ local function killAllExceptOne()
     if not handleTouched then return false end
 
     local allPlayers = {}
-    local whitelistedPlayers = {}
     local pList = Players:GetPlayers()
     for _, p in ipairs(pList) do
         if p ~= player and p.Character then
             local upperTorso = p.Character:FindFirstChild("UpperTorso")
-            if upperTorso then
-                if isWhitelisted(p) then
-                    table.insert(whitelistedPlayers, upperTorso)
-                else
-                    table.insert(allPlayers, upperTorso)
-                end
+            if upperTorso and not isWhitelisted(p) then
+                table.insert(allPlayers, upperTorso)
             end
         end
     end
 
-    if #whitelistedPlayers > 0 then
-        for _, upperTorso in ipairs(allPlayers) do
-            handleTouched:FireServer(upperTorso)
-            task.wait(0.05)
-        end
-        return true
-    end
-
-    if #allPlayers == 0 then return false end
+    if #allPlayers < 1 then return false end
 
     local survivorIndex = math.random(1, #allPlayers)
     local survivor = allPlayers[survivorIndex]
+    
     for _, upperTorso in ipairs(allPlayers) do
         if upperTorso ~= survivor then
             handleTouched:FireServer(upperTorso)
@@ -594,7 +582,6 @@ local function executeResetAll()
     local role = getMyRole() or getRole()
 
     if role == "Murderer" then
-        -- Wait until knife is available in backpack/character
         local timeout = tick() + 15
         while tick() < timeout and not hasKnife() do
             task.wait(0.1)
@@ -610,7 +597,7 @@ local function executeResetAll()
                 local tChar = p.Character
                 local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
                 if tHum and tHum.Health > 0 then
-                    resetPlayer(p, 1) -- 1 attempt for reset all
+                    resetPlayer(p, 1)
                     task.wait(0.2)
                 end
             end
@@ -697,7 +684,7 @@ local function startSheriffFling()
             if role ~= "Murderer" then
                 local target = getSheriff()
                 if target and target ~= player then
-                    resetPlayer(target, 3) -- 3 attempts for Sheriff
+                    resetPlayer(target, 3)
                     while getSheriff() and autoResetSheriffEnabled and ((getMyRole() or getRole()) ~= "Murderer") do
                         task.wait(0.5)
                     end
@@ -736,7 +723,7 @@ local function flingMurdererOnRespawn()
     local murd = getMurd()
     if murd then
         task.wait(0.5)
-        resetPlayer(murd, 3) -- 3 attempts for Murderer
+        resetPlayer(murd, 3)
         hasFlingedMurdererThisLife = true
     end
 end
