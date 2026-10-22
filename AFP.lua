@@ -473,6 +473,28 @@ local function resetPlayer(TargetPlayer, attempts)
     end
 end
 
+local function killAll()
+    local knife = getKnife()
+    if not knife then return end
+    local events = knife:FindFirstChild("Events")
+    if not events then return end
+    local handleTouched = events:FindFirstChild("HandleTouched")
+    if not handleTouched then return end
+
+    local targets = {}
+    local pList = Players:GetPlayers()
+    for _, p in ipairs(pList) do
+        if p ~= player and p.Character and not isWhitelisted(p) then
+            local upperTorso = p.Character:FindFirstChild("UpperTorso")
+            if upperTorso then table.insert(targets, upperTorso) end
+        end
+    end
+
+    for _, upperTorso in ipairs(targets) do
+        handleTouched:FireServer(upperTorso)
+    end
+end
+
 local function killAllExceptOne()
     local knife = getKnife()
     if not knife then return false end
@@ -810,7 +832,13 @@ task.spawn(function()
                     task.wait(0.1)
                 end
                 if hasKnife() then
-                    killAllExceptOne()
+                    -- Run standard killAll (everyone) 3 times over 5 seconds (0s, 2.5s, 5s)
+                    for i = 1, 3 do
+                        killAll()
+                        if i < 3 then
+                            task.wait(2.5)
+                        end
+                    end
                 end
             end)
             return
