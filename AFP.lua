@@ -586,16 +586,11 @@ end
 local function executeResetAll()
     local role = getMyRole() or getRole()
 
-    if role == "Murderer" then
+    if role == "Murderer" or hasKnife() then
         if not hasExecutedThisLife then
-            while not hasKnife() do
-                task.wait(0.1)
-            end
-            if hasKnife() and not hasExecutedThisLife then
-                hasExecutedThisLife = true
-                task.wait(1.0)
-                killAllExceptOne()
-            end
+            hasExecutedThisLife = true
+            task.wait(1.0)
+            killAllExceptOne()
         end
     else
         local murderer = getAnyMurd()
@@ -628,8 +623,8 @@ local function startResetAllMonitor()
             if resetAllState == "waiting" then
                 local shouldRun = false
 
-                if role == "Murderer" then
-                    if hasKnife() and not hasExecutedThisLife then
+                if role == "Murderer" or hasKnife() then
+                    if not hasExecutedThisLife then
                         shouldRun = true
                     end
                 else
@@ -643,7 +638,7 @@ local function startResetAllMonitor()
                     resetAllState = "done"
                 end
             elseif resetAllState == "done" then
-                if role == "Murderer" then
+                if role == "Murderer" or hasKnife() then
                     if not hasKnife() then
                         resetAllState = "waiting"
                     end
@@ -654,7 +649,7 @@ local function startResetAllMonitor()
                 end
             end
 
-            task.wait(0.5)
+            task.wait(0.1)
         end
     end)
     resetAllMaid:GiveTask(function() task.cancel(thread) end)
@@ -805,18 +800,12 @@ task.spawn(function()
 
         local role = getMyRole() or getRole()
 
-        if role == "Murderer" and autoKillAllEnabled then
+        if (role == "Murderer" or hasKnife()) and autoKillAllEnabled then
             task.spawn(function()
                 if not hasExecutedThisLife then
-                    local timeout = tick() + 15
-                    while tick() < timeout and not hasKnife() do
-                        task.wait(0.1)
-                    end
-                    if hasKnife() and not hasExecutedThisLife then
-                        hasExecutedThisLife = true
-                        task.wait(1.0)
-                        killAllExceptOne()
-                    end
+                    hasExecutedThisLife = true
+                    task.wait(1.0)
+                    killAllExceptOne()
                 end
             end)
             return
@@ -843,7 +832,7 @@ task.spawn(function()
             end
         end
 
-        if role ~= "Murderer" and autoResetMurdEnabled then
+        if role ~= "Murderer" and not hasKnife() and autoResetMurdEnabled then
             if not (autoShootMurdEnabled and hasGun()) then
                 task.spawn(function()
                     task.wait(0.5)
@@ -864,20 +853,13 @@ combat_section:AddToggle("Auto-Kill All", function(v)
     if v then
         task.spawn(function()
             while autoKillAllEnabled do
-                local role = getMyRole() or getRole()
-                if role == "Murderer" and not hasExecutedThisLife then
-                    local timeout = tick() + 15
-                    while tick() < timeout and autoKillAllEnabled and not hasKnife() do
-                        task.wait(0.1)
-                    end
-                    if hasKnife() and autoKillAllEnabled and not hasExecutedThisLife then
-                        hasExecutedThisLife = true
-                        task.wait(1.0)
-                        killAllExceptOne()
-                        break
-                    end
+                if not hasExecutedThisLife and hasKnife() then
+                    hasExecutedThisLife = true
+                    task.wait(1.0)
+                    killAllExceptOne()
+                    break
                 end
-                task.wait(0.5)
+                task.wait(0.1)
             end
         end)
     end
