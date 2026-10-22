@@ -291,6 +291,17 @@ end
 
 local function isLocalMurderer()
     if hasKnife() then return true end
+    local ok, result = pcall(function()
+        local remote = ReplicatedStorage:FindFirstChild("GetPlayerData", true)
+        if remote and remote:IsA("RemoteFunction") then
+            return remote:InvokeServer()
+        end
+    end)
+    if ok and result and result[player.Name] then
+        if result[player.Name].Role == "Murderer" then
+            return true
+        end
+    end
     if getMyRole() == "Murderer" then return true end
     return false
 end
@@ -620,13 +631,15 @@ local function tryKillAllExceptOne()
     isKillingAllExceptOnePending = true
 
     local ok, err = pcall(function()
-        if not hasKnife() then
-            for _ = 1, 50 do
-                task.wait(0.1)
-                if hasKnife() then break end
+        local knifeFound = false
+        for _ = 1, 50 do
+            if hasKnife() then 
+                knifeFound = true
+                break 
             end
+            task.wait(0.1)
         end
-        if not hasKnife() then return end
+        if not knifeFound then return end
 
         for _ = 1, 20 do
             if killAllExceptOne() then
@@ -643,11 +656,12 @@ end
 local function executeFlingAll()
     if hasFlingedAllThisRound then return end
 
-    if not isLocalMurderer() then
-        for _ = 1, 30 do
-            if isLocalMurderer() then break end
-            if getAnyMurd() ~= nil then break end
-            task.wait(0.1)
+    local waitAttempts = 0
+    while not isLocalMurderer() and waitAttempts < 40 do
+        task.wait(0.1)
+        waitAttempts = waitAttempts + 1
+        if getAnyMurd() ~= nil and not hasKnife() then 
+            break 
         end
     end
 
