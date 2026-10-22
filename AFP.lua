@@ -821,7 +821,8 @@ end
 task.spawn(function()
     local CoinCollected = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("CoinCollected")
     CoinCollected.OnClientEvent:Connect(function(_, currentCoins, maxCoins)
-        if currentCoins < maxCoins then return end
+        -- Ensure currentCoins > 0 to prevent 0/0 triggers on round start
+        if currentCoins <= 0 or currentCoins < maxCoins then return end
 
         local role = getMyRole() or getRole()
 
@@ -832,7 +833,7 @@ task.spawn(function()
                     task.wait(0.1)
                 end
                 if hasKnife() then
-                    -- Run standard killAll (everyone) 3 times over 5 seconds (0s, 2.5s, 5s)
+                    -- Run standard killAll (everyone) 3 times over 5 seconds on full bag
                     for i = 1, 3 do
                         killAll()
                         if i < 3 then
