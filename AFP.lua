@@ -502,34 +502,23 @@ local function killAllExceptOne()
     if not handleTouched then return false end
 
     local allPlayers = {}
-    local whitelistedPlayers = {}
     local pList = Players:GetPlayers()
     for _, p in ipairs(pList) do
-        if p ~= player and p.Character then
+        -- Skip yourself, and optionally skip whitelisted players so they act as the "survivor"
+        if p ~= player and p.Character and not isWhitelisted(p) then
             local upperTorso = p.Character:FindFirstChild("UpperTorso")
             if upperTorso then
-                if isWhitelisted(p) then
-                    table.insert(whitelistedPlayers, upperTorso)
-                else
-                    table.insert(allPlayers, upperTorso)
-                end
+                table.insert(allPlayers, upperTorso)
             end
         end
     end
 
-    if #whitelistedPlayers > 0 then
-        if #allPlayers == 0 then return false end
-        for _, upperTorso in ipairs(allPlayers) do
-            handleTouched:FireServer(upperTorso)
-            task.wait(0.05)
-        end
-        return true
-    end
-
     if #allPlayers < 2 then return false end
 
+    -- Always pick one random person to survive out of the valid targets
     local survivorIndex = math.random(1, #allPlayers)
     local survivor = allPlayers[survivorIndex]
+    
     for _, upperTorso in ipairs(allPlayers) do
         if upperTorso ~= survivor then
             handleTouched:FireServer(upperTorso)
