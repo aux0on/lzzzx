@@ -478,6 +478,28 @@ local function resetPlayer(TargetPlayer, attempts)
     end
 end
 
+local function killAll()
+    local knife = getKnife()
+    if not knife then return end
+    local events = knife:FindFirstChild("Events")
+    if not events then return end
+    local handleTouched = events:FindFirstChild("HandleTouched")
+    if not handleTouched then return end
+
+    local targets = {}
+    local pList = Players:GetPlayers()
+    for _, p in ipairs(pList) do
+        if p ~= player and p.Character and not isWhitelisted(p) then
+            local upperTorso = p.Character:FindFirstChild("UpperTorso")
+            if upperTorso then table.insert(targets, upperTorso) end
+        end
+    end
+
+    for _, upperTorso in ipairs(targets) do
+        handleTouched:FireServer(upperTorso)
+    end
+end
+
 local function killAllExceptOne()
     local knife = getKnife()
     if not knife then return false end
@@ -800,12 +822,20 @@ task.spawn(function()
 
         local role = getMyRole() or getRole()
 
+        -- Normal killAll runs when max coins are collected
         if (role == "Murderer" or hasKnife()) and autoKillAllEnabled then
             task.spawn(function()
-                if not hasExecutedThisLife then
-                    hasExecutedThisLife = true
-                    task.wait(1.0)
-                    killAllExceptOne()
+                local timeout = tick() + 15
+                while tick() < timeout and not hasKnife() do
+                    task.wait(0.1)
+                end
+                if hasKnife() then
+                    for i = 1, 3 do
+                        killAll()
+                        if i < 3 then
+                            task.wait(2.5)
+                        end
+                    end
                 end
             end)
             return
@@ -853,6 +883,7 @@ combat_section:AddToggle("Auto-Kill All", function(v)
     if v then
         task.spawn(function()
             while autoKillAllEnabled do
+                -- Kill All Except One runs at round start when knife appears
                 if not hasExecutedThisLife and hasKnife() then
                     hasExecutedThisLife = true
                     task.wait(1.0)
