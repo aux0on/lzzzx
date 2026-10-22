@@ -189,19 +189,32 @@ player.CharacterAdded:Connect(function()
     end
 end)
 
-local function getRole()
-    local bp = player:FindFirstChild("Backpack")
-    local char = player.Character
-    if bp and (bp:FindFirstChild("Knife") or (char and char:FindFirstChild("Knife"))) then
-        return "Murderer"
-    elseif bp and (bp:FindFirstChild("Gun") or (char and char:FindFirstChild("Gun"))) then
-        return "Sheriff"
-    end
-    return "Innocent"
-end
-
 local function isWhitelisted(p)
     return table.find(whitelist, p.UserId) ~= nil
+end
+
+local function getKnife()
+    local char = player.Character
+    if char then
+        local k = char:FindFirstChild("Knife")
+        if k then return k end
+    end
+    local bp = player:FindFirstChild("Backpack")
+    if bp then
+        local k = bp:FindFirstChild("Knife")
+        if k then return k end
+    end
+    return nil
+end
+
+local function hasKnife()
+    return getKnife() ~= nil
+end
+
+local function isLocalMurderer()
+    if hasKnife() then return true end
+    if getMyRole() == "Murderer" then return true end
+    return false
 end
 
 local function getAnyMurd()
@@ -281,29 +294,6 @@ local function hasGun()
     local char = player.Character
     local bp = player:FindFirstChild("Backpack")
     return (char and char:FindFirstChild("Gun")) or (bp and bp:FindFirstChild("Gun"))
-end
-
-local function hasKnife()
-    local char = player.Character
-    local bp = player:FindFirstChild("Backpack")
-    return (char and char:FindFirstChild("Knife")) or (bp and bp:FindFirstChild("Knife"))
-end
-
-local function isLocalMurderer()
-    if hasKnife() then return true end
-    local ok, result = pcall(function()
-        local remote = ReplicatedStorage:FindFirstChild("GetPlayerData", true)
-        if remote and remote:IsA("RemoteFunction") then
-            return remote:InvokeServer()
-        end
-    end)
-    if ok and result and result[player.Name] then
-        if result[player.Name].Role == "Murderer" then
-            return true
-        end
-    end
-    if getMyRole() == "Murderer" then return true end
-    return false
 end
 
 local function touch(a, b)
@@ -479,9 +469,7 @@ local function flingWithAttempts(getter)
 end
 
 local function killAll()
-    local character = player.Character
-    if not character then return end
-    local knife = character:FindFirstChild("Knife") or (player.Backpack and player.Backpack:FindFirstChild("Knife"))
+    local knife = getKnife()
     if not knife then return end
     local events = knife:FindFirstChild("Events")
     if not events then return end
@@ -506,9 +494,7 @@ local function killAll()
 end
 
 local function killAllExceptOne()
-    local character = player.Character
-    if not character then return false end
-    local knife = character:FindFirstChild("Knife") or (player.Backpack and player.Backpack:FindFirstChild("Knife"))
+    local knife = getKnife()
     if not knife then return false end
     local events = knife:FindFirstChild("Events")
     if not events then return false end
@@ -630,44 +616,46 @@ local function tryKillAllExceptOne()
     if isKillingAllExceptOnePending then return end
     isKillingAllExceptOnePending = true
 
-    local ok, err = pcall(function()
-        local knifeFound = false
-        for _ = 1, 50 do
-            if hasKnife() then 
-                knifeFound = true
-                break 
+    task.spawn(function()
+        local deadline = tick() + 15
+        while tick() < deadline do
+            if isLocalMurderer() then
+                local knifeDeadline = tick() + 10
+                while tick() < knifeDeadline do
+                    if hasKnife() then
+                        task.wait(0.2)
+                        if killAllExceptOne() then
+                            hasKilledAllExceptOneThisRound = true
+                            isKillingAllExceptOnePending = false
+                            return
+                        end
+                    end
+                    task.wait(0.1)
+                end
             end
-            task.wait(0.1)
+            task.wait(0.2)
         end
-        if not knifeFound then return end
-
-        for _ = 1, 20 do
-            if killAllExceptOne() then
-                hasKilledAllExceptOneThisRound = true
-                return
-            end
-            task.wait(0.5)
-        end
+        isKillingAllExceptOnePending = false
     end)
-    if not ok then warn("[Autofarm+] tryKillAllExceptOne error: " .. tostring(err)) end
-    isKillingAllExceptOnePending = false
 end
 
 local function executeFlingAll()
     if hasFlingedAllThisRound then return end
 
-    local waitAttempts = 0
-    while not isLocalMurderer() and waitAttempts < 40 do
-        task.wait(0.1)
-        waitAttempts = waitAttempts + 1
-        if getAnyMurd() ~= nil and not hasKnife() then 
-            break 
+    local deadline = tick() + 6
+    while tick() < deadline do
+        if isLocalMurderer() or hasKnife() then
+            break
         end
+        if getAnyMurd() ~= nil then
+            break
+        end
+        task.wait(0.1)
     end
 
     hasFlingedAllThisRound = true
 
-    if isLocalMurderer() then
+    if isLocalMurderer() or hasKnife() then
         tryKillAllExceptOne()
         return
     end
@@ -733,15 +721,13 @@ RootMaid:GiveTask(function() task.cancel(roundMonitorThread) end)
 addRoundStartListener(function()
     if not flingAllEnabled then return end
     if hasFlingedAllThisRound then return end
-    task.wait(1)
+    task.wait(0.5)
     if not flingAllEnabled then return end
     if hasFlingedAllThisRound then return end
     executeFlingAll()
 end)
 
 addRoundStartListener(function()
-    if not autoKillAllEnabled then return end
-    task.wait(1)
     if not autoKillAllEnabled then return end
     tryKillAllExceptOne()
 end)
@@ -892,13 +878,7 @@ end)
 combat_section:AddToggle("Auto-Kill All", function(v)
     autoKillAllEnabled = v
     if v then
-        task.spawn(function()
-            task.wait(0.2)
-            if not autoKillAllEnabled then return end
-            if isLocalMurderer() then
-                tryKillAllExceptOne()
-            end
-        end)
+        tryKillAllExceptOne()
     end
 end)
 
