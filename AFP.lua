@@ -169,6 +169,7 @@ RootMaid:GiveTask(autoGGMaid)
 
 local resetAllState = "waiting"
 local hasFlingedMurdererThisLife = false
+local hasExecutedThisLife = false
 
 local blackScreenGui = nil
 local blackScreenFrame = nil
@@ -219,6 +220,8 @@ local function CleanupNoRender()
 end
 
 player.CharacterAdded:Connect(function()
+    hasExecutedThisLife = false
+    hasFlingedMurdererThisLife = false
     if noRenderEnabled then
         task.wait(0.5)
         RunService:Set3dRenderingEnabled(false)
@@ -228,6 +231,8 @@ player.CharacterAdded:Connect(function()
         task.cancel(shootLoopThread)
         shootLoopThread = nil
     end
+    task.wait(1.5)
+    flingMurdererOnRespawn()
 end)
 
 local function getRole()
@@ -473,28 +478,6 @@ local function resetPlayer(TargetPlayer, attempts)
     end
 end
 
-local function killAll()
-    local knife = getKnife()
-    if not knife then return end
-    local events = knife:FindFirstChild("Events")
-    if not events then return end
-    local handleTouched = events:FindFirstChild("HandleTouched")
-    if not handleTouched then return end
-
-    local targets = {}
-    local pList = Players:GetPlayers()
-    for _, p in ipairs(pList) do
-        if p ~= player and p.Character and not isWhitelisted(p) then
-            local upperTorso = p.Character:FindFirstChild("UpperTorso")
-            if upperTorso then table.insert(targets, upperTorso) end
-        end
-    end
-
-    for _, upperTorso in ipairs(targets) do
-        handleTouched:FireServer(upperTorso)
-    end
-end
-
 local function killAllExceptOne()
     local knife = getKnife()
     if not knife then return false end
@@ -604,12 +587,15 @@ local function executeResetAll()
     local role = getMyRole() or getRole()
 
     if role == "Murderer" then
-        local timeout = tick() + 15
-        while tick() < timeout and not hasKnife() do
-            task.wait(0.1)
-        end
-        if hasKnife() then
-            killAllExceptOne()
+        if not hasExecutedThisLife then
+            while not hasKnife() do
+                task.wait(0.1)
+            end
+            if hasKnife() and not hasExecutedThisLife then
+                hasExecutedThisLife = true
+                task.wait(1.0)
+                killAllExceptOne()
+            end
         end
     else
         local murderer = getAnyMurd()
@@ -643,7 +629,7 @@ local function startResetAllMonitor()
                 local shouldRun = false
 
                 if role == "Murderer" then
-                    if hasKnife() then
+                    if hasKnife() and not hasExecutedThisLife then
                         shouldRun = true
                     end
                 else
@@ -750,12 +736,6 @@ local function flingMurdererOnRespawn()
     end
 end
 
-player.CharacterAdded:Connect(function()
-    hasFlingedMurdererThisLife = false
-    task.wait(1.5)
-    flingMurdererOnRespawn()
-end)
-
 local auraData = {
     enabled = false,
     thread = nil,
@@ -827,17 +807,15 @@ task.spawn(function()
 
         if role == "Murderer" and autoKillAllEnabled then
             task.spawn(function()
-                local timeout = tick() + 15
-                while tick() < timeout and not hasKnife() do
-                    task.wait(0.1)
-                end
-                if hasKnife() then
-                    -- Run standard killAll (everyone) 3 times over 5 seconds (0s, 2.5s, 5s)
-                    for i = 1, 3 do
-                        killAll()
-                        if i < 3 then
-                            task.wait(2.5)
-                        end
+                if not hasExecutedThisLife then
+                    local timeout = tick() + 15
+                    while tick() < timeout and not hasKnife() do
+                        task.wait(0.1)
+                    end
+                    if hasKnife() and not hasExecutedThisLife then
+                        hasExecutedThisLife = true
+                        task.wait(1.0)
+                        killAllExceptOne()
                     end
                 end
             end)
@@ -887,12 +865,14 @@ combat_section:AddToggle("Auto-Kill All", function(v)
         task.spawn(function()
             while autoKillAllEnabled do
                 local role = getMyRole() or getRole()
-                if role == "Murderer" then
+                if role == "Murderer" and not hasExecutedThisLife then
                     local timeout = tick() + 15
                     while tick() < timeout and autoKillAllEnabled and not hasKnife() do
                         task.wait(0.1)
                     end
-                    if hasKnife() and autoKillAllEnabled then
+                    if hasKnife() and autoKillAllEnabled and not hasExecutedThisLife then
+                        hasExecutedThisLife = true
+                        task.wait(1.0)
                         killAllExceptOne()
                         break
                     end
