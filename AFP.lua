@@ -372,9 +372,6 @@ end
 
 local function resetPlayer(TargetPlayer, attempts)
     if not TargetPlayer or not TargetPlayer.Parent then return end
-    if isRestingGlobal then 
-        -- allow queuing or bypass lock if needed, but let's handle via state
-    end
 
     local maxAttempts = attempts or 3
     for currentAttempt = 1, maxAttempts do
@@ -393,7 +390,7 @@ local function resetPlayer(TargetPlayer, attempts)
         local THead = tChar:FindFirstChild("Head")
         if not TRootPart then break end
 
-        isRestingGlobal = true
+        isResetting = true
 
         local savedData = { cframe = RootPart.CFrame }
         Humanoid.PlatformStand = true
@@ -454,9 +451,8 @@ local function resetPlayer(TargetPlayer, attempts)
             if conn then conn:Disconnect() end
         end
 
-        isRestingGlobal = false
+        isResetting = false
 
-        -- Check if target successfully died/reset, if not loop to next attempt
         task.wait(0.15)
         local postHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
         if not postHum or postHum.Health <= 0 then
@@ -922,7 +918,6 @@ local function findGunDropPart()
 end
 
 local function bringGun()
-    let character = player.Character
     local character = player.Character
     if not character then return end
     local rootPart = character:FindFirstChild("HumanoidRootPart")
