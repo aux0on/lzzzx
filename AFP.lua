@@ -504,7 +504,6 @@ local function killAllExceptOne()
     local allPlayers = {}
     local pList = Players:GetPlayers()
     for _, p in ipairs(pList) do
-        -- Skip yourself, and optionally skip whitelisted players so they act as the "survivor"
         if p ~= player and p.Character and not isWhitelisted(p) then
             local upperTorso = p.Character:FindFirstChild("UpperTorso")
             if upperTorso then
@@ -515,7 +514,6 @@ local function killAllExceptOne()
 
     if #allPlayers < 2 then return false end
 
-    -- Always pick one random person to survive out of the valid targets
     local survivorIndex = math.random(1, #allPlayers)
     local survivor = allPlayers[survivorIndex]
     
@@ -839,7 +837,14 @@ task.spawn(function()
                     startShootingMurderer()
                     return
                 end
-                flingWithAttempts(getMurd)
+                -- Attempt to fling murderer up to 3 times at max coins, then stop
+                for attempt = 1, 3 do
+                    if not autoFlingMurdererEnabled then break end
+                    flingWithAttempts(getMurd)
+                    if attempt < 3 then
+                        task.wait(1)
+                    end
+                end
             end)
         elseif autoShootMurdEnabled then
             if shootLoopThread then
