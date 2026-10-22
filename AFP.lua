@@ -12,10 +12,6 @@ local Players = game:GetService("Players")
 while not Players.LocalPlayer do task.wait() end
 local player = Players.LocalPlayer
 
-local FLING_DURATION = 2
-local FLING_DELAY = 0.5
-local MAX_FLING_ATTEMPTS = 3
-
 local trueAntiVoidConnection
 local originalDestroyHeight = workspace.FallenPartsDestroyHeight
 
@@ -77,6 +73,49 @@ function Maid:Destroy() self:DoCleaning() end
 
 local RootMaid = Maid.new()
 
+local noclipEnabled = false
+
+local function restoreCollision()
+    local character = player.Character
+    if character then
+        for _, part in ipairs(character:GetDescendants()) do
+            if part:IsA("BasePart") then part.CanCollide = true end
+        end
+    end
+end
+
+local function applyNoclipNow()
+    local character = player.Character
+    if character then
+        for _, part in ipairs(character:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = false
+            end
+        end
+    end
+end
+
+local function setNoclip(state)
+    noclipEnabled = state
+    if not state then
+        restoreCollision()
+    else
+        applyNoclipNow()
+    end
+end
+
+local noclipSteppedConn = RunService.Stepped:Connect(function()
+    if not noclipEnabled then return end
+    local character = player.Character
+    if not character then return end
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") and part.CanCollide then
+            part.CanCollide = false
+        end
+    end
+end)
+RootMaid:GiveTask(noclipSteppedConn)
+
 local roleCache = {
     data      = nil,
     timestamp = 0,
@@ -113,21 +152,24 @@ end
 
 local autoKillAllEnabled = false
 local autoShootMurdEnabled = false
-local autoFlingMurdererEnabled = false
-local autoFlingSheriffEnabled = false
-local flingAllEnabled = false
+local autoResetMurdEnabled = false
+local autoResetSheriffEnabled = false
+local resetAllEnabled = false
 local noRenderEnabled = false
 local autoGGEnabled = false
 
 local afkConnection
+local isResetting = false
+local currentResetConnection = nil
+
+local sheriffFlingMaid = nil
+local resetAllMaid = nil
 local autoGGMaid = Maid.new()
 RootMaid:GiveTask(autoGGMaid)
 
+local maxFlingAttempts = 3
+local resetAllState = "waiting"
 local hasFlingedMurdererThisLife = false
-local hasFlingedSheriffThisRound = false
-local hasFlingedAllThisRound = false
-local hasKilledAllExceptOneThisRound = false
-local isKillingAllExceptOnePending = false
 
 local blackScreenGui = nil
 local blackScreenFrame = nil
@@ -189,32 +231,19 @@ player.CharacterAdded:Connect(function()
     end
 end)
 
+local function getRole()
+    local bp = player:FindFirstChild("Backpack")
+    local char = player.Character
+    if bp and (bp:FindFirstChild("Knife") or (char and char:FindFirstChild("Knife"))) then
+        return "Murderer"
+    elseif bp and (bp:FindFirstChild("Gun") or (char and char:FindFirstChild("Gun"))) then
+        return "Sheriff"
+    end
+    return "Innocent"
+end
+
 local function isWhitelisted(p)
     return table.find(whitelist, p.UserId) ~= nil
-end
-
-local function getKnife()
-    local char = player.Character
-    if char then
-        local k = char:FindFirstChild("Knife")
-        if k then return k end
-    end
-    local bp = player:FindFirstChild("Backpack")
-    if bp then
-        local k = bp:FindFirstChild("Knife")
-        if k then return k end
-    end
-    return nil
-end
-
-local function hasKnife()
-    return getKnife() ~= nil
-end
-
-local function isLocalMurderer()
-    if hasKnife() then return true end
-    if getMyRole() == "Murderer" then return true end
-    return false
 end
 
 local function getAnyMurd()
@@ -296,6 +325,12 @@ local function hasGun()
     return (char and char:FindFirstChild("Gun")) or (bp and bp:FindFirstChild("Gun"))
 end
 
+local function hasKnife()
+    local char = player.Character
+    local bp = player:FindFirstChild("Backpack")
+    return (char and char:FindFirstChild("Knife")) or (bp and bp:FindFirstChild("Knife"))
+end
+
 local function touch(a, b)
     pcall(function()
         firetouchinterest(a, b, 0)
@@ -336,13 +371,9 @@ local function fullyRestoreCharacter(character, savedData)
     end
 end
 
-local function flingPlayer(TargetPlayer, duration)
-    if not TargetPlayer or not TargetPlayer.Parent then return end
-    if TargetPlayer == player then return end
-    if isWhitelisted(TargetPlayer) then
-        shared.Notify("Whitelist", TargetPlayer.Name .. " is whitelisted!", 3)
-        return
-    end
+local function resetPlayer(TargetPlayer)
+    if not TargetPlayer then return end
+    if isResetting then return end
 
     local Character = player.Character
     if not Character then return end
@@ -354,6 +385,8 @@ local function flingPlayer(TargetPlayer, duration)
     local TRootPart = TCharacter:FindFirstChild("HumanoidRootPart")
     local THead = TCharacter:FindFirstChild("Head")
     if not TRootPart then return end
+
+    isResetting = true
 
     local savedData = { cframe = RootPart.CFrame }
     Humanoid.PlatformStand = true
@@ -368,30 +401,29 @@ local function flingPlayer(TargetPlayer, duration)
     bg.P = 1000000
     bg.Parent = RootPart
 
-    local previousDestroyHeight = Workspace.FallenPartsDestroyHeight
     Workspace.FallenPartsDestroyHeight = 0/0
 
     local startTime = tick()
-    local resetDuration = duration or FLING_DURATION
-    if resetDuration <= 0 then resetDuration = 0.1 end
+    local resetDuration = 1.0 -- Reduced duration for faster execution
 
-    local completed = false
-    local conn
-    conn = RunService.Heartbeat:Connect(function()
-        if tick() - startTime > resetDuration or not TargetPlayer.Character or not TRootPart.Parent or not Character.Parent then
-            Workspace.FallenPartsDestroyHeight = previousDestroyHeight
-            if bv.Parent then bv:Destroy() end
-            if bg.Parent then bg:Destroy() end
+    currentResetConnection = RunService.Heartbeat:Connect(function()
+        if tick() - startTime > resetDuration or not TargetPlayer.Character or not TRootPart.Parent then
+            Workspace.FallenPartsDestroyHeight = originalDestroyHeight
+            bv:Destroy()
+            bg:Destroy()
             clearRootReference(RootPart)
             fullyRestoreCharacter(Character, savedData)
-            if conn then conn:Disconnect() end
-            completed = true
+            if currentResetConnection then
+                currentResetConnection:Disconnect()
+                currentResetConnection = nil
+            end
+            isResetting = false
             return
         end
 
         if TRootPart and TRootPart.Parent and Character and Character.Parent then
-            local targetPos = THead and THead.Position or (TRootPart.Position + Vector3.new(0, 5, 0))
-            RootPart.CFrame = CFrame.new(targetPos) * CFrame.Angles(math.pi / 2, 0, 0)
+            local headPos = THead and THead.Position or (TRootPart.Position + Vector3.new(0, 2.5, 0))
+            RootPart.CFrame = CFrame.new(headPos) * CFrame.Angles(math.pi / 2, 0, 0)
             RootPart.AssemblyLinearVelocity = Vector3.new(0, -50000, 0)
             RootPart.AssemblyAngularVelocity = Vector3.new(7500, 7500, 7500)
 
@@ -402,41 +434,12 @@ local function flingPlayer(TargetPlayer, duration)
             setRootReference(RootPart, TRootPart)
         end
     end)
-
-    while not completed and TargetPlayer.Parent do
-        task.wait(0.05)
-    end
-
-    if not completed then
-        Workspace.FallenPartsDestroyHeight = previousDestroyHeight
-        if bv.Parent then bv:Destroy() end
-        if bg.Parent then bg:Destroy() end
-        clearRootReference(RootPart)
-        fullyRestoreCharacter(Character, savedData)
-        if conn then conn:Disconnect() end
-    end
-end
-
-local function flingWithAttempts(getter)
-    for attempt = 1, MAX_FLING_ATTEMPTS do
-        local target = getter()
-        if target and target.Parent then
-            local tChar = target.Character
-            local thum = tChar and tChar:FindFirstChildOfClass("Humanoid")
-            if not thum or thum.Health <= 0 then
-                return
-            end
-            flingPlayer(target, FLING_DURATION)
-            return
-        end
-        if attempt < MAX_FLING_ATTEMPTS then
-            task.wait(FLING_DELAY)
-        end
-    end
 end
 
 local function killAll()
-    local knife = getKnife()
+    local character = player.Character
+    if not character then return end
+    local knife = character:FindFirstChild("Knife") or (player.Backpack and player.Backpack:FindFirstChild("Knife"))
     if not knife then return end
     local events = knife:FindFirstChild("Events")
     if not events then return end
@@ -461,36 +464,49 @@ local function killAll()
 end
 
 local function killAllExceptOne()
-    local knife = getKnife()
-    if not knife then return false end
+    local character = player.Character
+    if not character then return end
+    local knife = character:FindFirstChild("Knife") or (player.Backpack and player.Backpack:FindFirstChild("Knife"))
+    if not knife then return end
     local events = knife:FindFirstChild("Events")
-    if not events then return false end
+    if not events then return end
     local handleTouched = events:FindFirstChild("HandleTouched")
-    if not handleTouched then return false end
+    if not handleTouched then return end
 
     local allPlayers = {}
+    local whitelistedPlayers = {}
     local pList = Players:GetPlayers()
     for _, p in ipairs(pList) do
-        if p ~= player and p.Character and not isWhitelisted(p) then
+        if p ~= player and p.Character then
             local upperTorso = p.Character:FindFirstChild("UpperTorso")
             if upperTorso then
-                table.insert(allPlayers, upperTorso)
+                if isWhitelisted(p) then
+                    table.insert(whitelistedPlayers, upperTorso)
+                else
+                    table.insert(allPlayers, upperTorso)
+                end
             end
         end
     end
 
-    if #allPlayers < 2 then return false end
+    if #whitelistedPlayers > 0 then
+        for _, upperTorso in ipairs(allPlayers) do
+            handleTouched:FireServer(upperTorso)
+            task.wait(0.05)
+        end
+        return
+    end
+
+    if #allPlayers == 0 then return end
 
     local survivorIndex = math.random(1, #allPlayers)
     local survivor = allPlayers[survivorIndex]
-    
     for _, upperTorso in ipairs(allPlayers) do
         if upperTorso ~= survivor then
             handleTouched:FireServer(upperTorso)
             task.wait(0.05)
         end
     end
-    return true
 end
 
 local function equipGun()
@@ -565,155 +581,154 @@ local function startShootingMurderer()
     end)
 end
 
-local function tryKillAllExceptOne()
-    if hasKilledAllExceptOneThisRound then return end
-    if isKillingAllExceptOnePending then return end
-    isKillingAllExceptOnePending = true
+local function executeResetAll()
+    local role = getMyRole() or getRole()
 
-    task.spawn(function()
-        local deadline = tick() + 15
-        while tick() < deadline do
-            if isLocalMurderer() then
-                local knifeDeadline = tick() + 10
-                while tick() < knifeDeadline do
-                    if hasKnife() then
-                        task.wait(0.2)
-                        if killAllExceptOne() then
-                            hasKilledAllExceptOneThisRound = true
-                            isKillingAllExceptOnePending = false
-                            return
-                        end
-                    end
-                    task.wait(0.1)
-                end
+    if role == "Murderer" then
+        killAllExceptOne()
+    else
+        local murderer = getAnyMurd()
+        local targets = {}
+        local pList = Players:GetPlayers()
+        for _, p in ipairs(pList) do
+            if p ~= player and p ~= murderer and not isWhitelisted(p) then
+                table.insert(targets, p)
+            end
+        end
+
+        for _, p in ipairs(targets) do
+            resetPlayer(p)
+            while isResetting do
+                task.wait()
             end
             task.wait(0.2)
         end
-        isKillingAllExceptOnePending = false
-    end)
+    end
 end
 
-local function executeFlingAll()
-    if hasFlingedAllThisRound then return end
+local function startResetAllMonitor()
+    if resetAllMaid then resetAllMaid:Destroy() end
+    resetAllMaid = Maid.new()
+    resetAllState = "waiting"
 
-    local deadline = tick() + 6
-    while tick() < deadline do
-        if isLocalMurderer() or hasKnife() then
-            break
+    local thread = task.spawn(function()
+        while resetAllEnabled do
+            setNoclip(true)
+            local role = getMyRole() or getRole()
+
+            if resetAllState == "waiting" then
+                local shouldRun = false
+
+                if role == "Murderer" then
+                    if hasKnife() then
+                        shouldRun = true
+                    end
+                else
+                    if getAnyMurd() then
+                        shouldRun = true
+                    end
+                end
+
+                if shouldRun then
+                    executeResetAll()
+                    resetAllState = "done"
+                end
+            elseif resetAllState == "done" then
+                if role == "Murderer" then
+                    if not hasKnife() then
+                        resetAllState = "waiting"
+                    end
+                else
+                    if not getAnyMurd() then
+                        resetAllState = "waiting"
+                    end
+                end
+            end
+
+            task.wait(0.5)
         end
-        if getAnyMurd() ~= nil then
-            break
-        end
-        task.wait(0.1)
+    end)
+    resetAllMaid:GiveTask(function() task.cancel(thread) end)
+end
+
+local function stopResetAllMonitor()
+    if resetAllMaid then
+        resetAllMaid:Destroy()
+        resetAllMaid = nil
     end
+    resetAllState = "waiting"
+end
 
-    hasFlingedAllThisRound = true
+local function updateNoclip()
+    setNoclip(autoResetSheriffEnabled or autoResetMurdEnabled or resetAllEnabled)
+end
 
-    if isLocalMurderer() or hasKnife() then
-        tryKillAllExceptOne()
+local function toggleResetAll(enabled)
+    resetAllEnabled = enabled
+    if enabled then
+        startResetAllMonitor()
+    else
+        stopResetAllMonitor()
+    end
+    updateNoclip()
+end
+
+local function startSheriffFling()
+    if sheriffFlingMaid then sheriffFlingMaid:Destroy() end
+    sheriffFlingMaid = Maid.new()
+    local thread = task.spawn(function()
+        while autoResetSheriffEnabled do
+            setNoclip(true)
+            local role = getMyRole() or getRole()
+            if role ~= "Murderer" then
+                local target = getSheriff()
+                if target and target ~= player then
+                    resetPlayer(target)
+                    while getSheriff() and autoResetSheriffEnabled and ((getMyRole() or getRole()) ~= "Murderer") do
+                        task.wait(0.5)
+                    end
+                end
+            end
+            task.wait(0.3)
+        end
+        if sheriffFlingMaid then
+            sheriffFlingMaid:Destroy()
+            sheriffFlingMaid = nil
+        end
+        updateNoclip()
+    end)
+    sheriffFlingMaid:GiveTask(function() task.cancel(thread) end)
+end
+
+local function stopSheriffFling()
+    if sheriffFlingMaid then
+        sheriffFlingMaid:Destroy()
+        sheriffFlingMaid = nil
+    end
+    updateNoclip()
+end
+
+local function flingMurdererOnRespawn()
+    if not autoResetMurdEnabled then return end
+    if hasFlingedMurdererThisLife then return end
+
+    local role = getMyRole() or getRole()
+    if role == "Murderer" then return end
+
+    if autoShootMurdEnabled and hasGun() then
         return
     end
 
-    local murderer = getAnyMurd()
-    local targets = {}
-    local pList = Players:GetPlayers()
-    for _, p in ipairs(pList) do
-        if p ~= player and p ~= murderer and not isWhitelisted(p) then
-            table.insert(targets, p)
-        end
-    end
-
-    for i, p in ipairs(targets) do
-        if not flingAllEnabled then return end
-        flingPlayer(p, FLING_DURATION)
-        if i < #targets then
-            task.wait(FLING_DELAY)
-        end
-    end
-end
-
-local roundStartListeners = {}
-local roundActive = false
-
-local function addRoundStartListener(fn)
-    table.insert(roundStartListeners, fn)
-end
-
-local roundMonitorThread = task.spawn(function()
-    task.wait(1)
-    roundActive = false
-
-    while true do
-        local active = false
-        if getMyRole() == "Murderer" then
-            active = true
-        elseif hasKnife() then
-            active = true
-        elseif getAnyMurd() ~= nil then
-            active = true
-        end
-
-        if active and not roundActive then
-            roundActive = true
-            roleCache.data = nil
-            roleCache.timestamp = 0
-            for _, fn in ipairs(roundStartListeners) do
-                task.spawn(function()
-                    local ok, err = pcall(fn)
-                    if not ok then warn("[Autofarm+] RoundStart listener error: " .. tostring(err)) end
-                end)
-            end
-        elseif not active and roundActive then
-            roundActive = false
-        end
-
+    local murd = getMurd()
+    if murd then
         task.wait(0.5)
+        resetPlayer(murd)
+        hasFlingedMurdererThisLife = true
     end
-end)
-RootMaid:GiveTask(function() task.cancel(roundMonitorThread) end)
-
-addRoundStartListener(function()
-    if not flingAllEnabled then return end
-    if hasFlingedAllThisRound then return end
-    task.wait(0.5)
-    if not flingAllEnabled then return end
-    if hasFlingedAllThisRound then return end
-    executeFlingAll()
-end)
-
-addRoundStartListener(function()
-    if not autoKillAllEnabled then return end
-    tryKillAllExceptOne()
-end)
-
-addRoundStartListener(function()
-    if not autoFlingSheriffEnabled then return end
-    if flingAllEnabled then return end
-    if hasFlingedSheriffThisRound then return end
-    task.wait(1)
-    if not autoFlingSheriffEnabled or flingAllEnabled then return end
-    if hasFlingedSheriffThisRound then return end
-    hasFlingedSheriffThisRound = true
-    flingWithAttempts(getSheriff)
-end)
-
-local function flingMurdererOnRespawn()
-    if not autoFlingMurdererEnabled then return end
-    if hasFlingedMurdererThisLife then return end
-    if autoShootMurdEnabled and hasGun() then return end
-    if isLocalMurderer() then return end
-
-    hasFlingedMurdererThisLife = true
-    task.wait(0.5)
-    flingWithAttempts(getMurd)
 end
 
 player.CharacterAdded:Connect(function()
     hasFlingedMurdererThisLife = false
-    hasFlingedSheriffThisRound = false
-    hasFlingedAllThisRound = false
-    hasKilledAllExceptOneThisRound = false
-    isKillingAllExceptOnePending = false
     task.wait(1.5)
     flingMurdererOnRespawn()
 end)
@@ -785,49 +800,42 @@ task.spawn(function()
     CoinCollected.OnClientEvent:Connect(function(_, currentCoins, maxCoins)
         if currentCoins < maxCoins then return end
 
-        local isMurderer = isLocalMurderer()
+        local role = getMyRole() or getRole()
 
-        if isMurderer and autoKillAllEnabled then
+        if role == "Murderer" and autoKillAllEnabled then
             task.spawn(killAll)
             return
         end
 
-        if isMurderer then return end
-
-        if autoShootMurdEnabled and hasGun() then
-            startShootingMurderer()
-        elseif autoFlingMurdererEnabled then
-            task.spawn(function()
-                task.wait(1)
-                if not autoFlingMurdererEnabled then return end
-                if autoShootMurdEnabled and hasGun() then
-                    startShootingMurderer()
-                    return
-                end
-                -- Attempt to fling murderer up to 3 times at max coins, then stop
-                for attempt = 1, 3 do
-                    if not autoFlingMurdererEnabled then break end
-                    flingWithAttempts(getMurd)
-                    if attempt < 3 then
-                        task.wait(1)
-                    end
-                end
-            end)
-        elseif autoShootMurdEnabled then
-            if shootLoopThread then
-                task.cancel(shootLoopThread)
-                shootLoopThread = nil
-            end
-            shootLoopThread = task.spawn(function()
-                while player.Character and not hasGun() do
-                    task.wait(0.5)
-                end
-                if player.Character and hasGun() then
-                    startShootingMurderer()
-                else
+        if autoShootMurdEnabled then
+            if hasGun() then
+                startShootingMurderer()
+            else
+                if shootLoopThread then
+                    task.cancel(shootLoopThread)
                     shootLoopThread = nil
                 end
-            end)
+                shootLoopThread = task.spawn(function()
+                    while player.Character and not hasGun() do
+                        task.wait(0.5)
+                    end
+                    if player.Character and hasGun() then
+                        startShootingMurderer()
+                    else
+                        shootLoopThread = nil
+                    end
+                end)
+            end
+        end
+
+        if role ~= "Murderer" and autoResetMurdEnabled then
+            if not (autoShootMurdEnabled and hasGun()) then
+                task.spawn(function()
+                    task.wait(0.5)
+                    local target = getMurd()
+                    if target then resetPlayer(target) end
+                end)
+            end
         end
     end)
 end)
@@ -838,46 +846,32 @@ end)
 
 combat_section:AddToggle("Auto-Kill All", function(v)
     autoKillAllEnabled = v
-    if v then
-        tryKillAllExceptOne()
-    end
 end)
 
 combat_section:AddToggle("Auto-Shoot Murd", function(v)
     autoShootMurdEnabled = v
 end)
 
-combat_section:AddToggle("Auto-Fling Murderer", function(v)
-    autoFlingMurdererEnabled = v
+combat_section:AddToggle("Auto-Reset Murderer", function(v)
+    autoResetMurdEnabled = v
+    updateNoclip()
     if v and player.Character and not hasFlingedMurdererThisLife then
         task.spawn(flingMurdererOnRespawn)
     end
 end)
 
-combat_section:AddToggle("Auto-Fling Sheriff", function(v)
-    autoFlingSheriffEnabled = v
-    if v and roundActive and not hasFlingedSheriffThisRound and not flingAllEnabled then
-        task.spawn(function()
-            task.wait(0.2)
-            if not autoFlingSheriffEnabled then return end
-            if flingAllEnabled then return end
-            if hasFlingedSheriffThisRound then return end
-            hasFlingedSheriffThisRound = true
-            flingWithAttempts(getSheriff)
-        end)
+combat_section:AddToggle("Auto-Reset Sheriff", function(v)
+    autoResetSheriffEnabled = v
+    if v then
+        startSheriffFling()
+    else
+        stopSheriffFling()
     end
+    updateNoclip()
 end)
 
-combat_section:AddToggle("Auto-Fling All", function(v)
-    flingAllEnabled = v
-    if v and roundActive and not hasFlingedAllThisRound then
-        task.spawn(function()
-            task.wait(0.2)
-            if not flingAllEnabled then return end
-            if hasFlingedAllThisRound then return end
-            executeFlingAll()
-        end)
-    end
+combat_section:AddToggle("Auto-Reset All", function(v)
+    toggleResetAll(v)
 end)
 
 combat_section:AddToggle("Coin Aura", function(v)
@@ -890,6 +884,10 @@ end)
 
 combat_section:AddSlider("Coin Aura Radius", 1, 8, 8, function(value)
     auraData.radius = value
+end)
+
+combat_section:AddSlider("Max Fling Attempts", 1, 20, 3, function(value)
+    maxFlingAttempts = value
 end)
 
 local function findGunDropPart()
@@ -980,7 +978,11 @@ end)
 
 RootMaid:GiveTask(function()
     CleanupNoRender()
+    if currentResetConnection then currentResetConnection:Disconnect() end
+    if sheriffFlingMaid then sheriffFlingMaid:Destroy() end
+    if resetAllMaid then resetAllMaid:Destroy() end
     autoGGMaid:DoCleaning()
+    setNoclip(false)
 end)
 
 shared.Notify("Autofarm+ loaded successfully!", 1)
