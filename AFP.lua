@@ -167,7 +167,6 @@ local resetAllMaid = nil
 local autoGGMaid = Maid.new()
 RootMaid:GiveTask(autoGGMaid)
 
-local maxFlingAttempts = 3
 local resetAllState = "waiting"
 local hasFlingedMurdererThisLife = false
 
@@ -371,69 +370,99 @@ local function fullyRestoreCharacter(character, savedData)
     end
 end
 
-local function resetPlayer(TargetPlayer)
-    if not TargetPlayer then return end
-    if isResetting then return end
+local function resetPlayer(TargetPlayer, attempts)
+    if not TargetPlayer or not TargetPlayer.Parent then return end
+    if isRestingGlobal then 
+        -- allow queuing or bypass lock if needed, but let's handle via state
+    end
 
-    local Character = player.Character
-    if not Character then return end
-    local Humanoid = Character:FindFirstChildOfClass("Humanoid")
-    local RootPart = Humanoid and Humanoid.RootPart
-    local TCharacter = TargetPlayer.Character
-    if not (Character and Humanoid and RootPart and TCharacter) then return end
+    local maxAttempts = attempts or 3
+    for currentAttempt = 1, maxAttempts do
+        if not TargetPlayer.Parent then break end
+        local tChar = TargetPlayer.Character
+        local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
+        if tHum and tHum.Health <= 0 then break end
 
-    local TRootPart = TCharacter:FindFirstChild("HumanoidRootPart")
-    local THead = TCharacter:FindFirstChild("Head")
-    if not TRootPart then return end
+        local Character = player.Character
+        if not Character then break end
+        local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+        local RootPart = Humanoid and Humanoid.RootPart
+        if not (Character and Humanoid and RootPart and tChar) then break end
 
-    isResetting = true
+        local TRootPart = tChar:FindFirstChild("HumanoidRootPart")
+        local THead = tChar:FindFirstChild("Head")
+        if not TRootPart then break end
 
-    local savedData = { cframe = RootPart.CFrame }
-    Humanoid.PlatformStand = true
+        isRestingGlobal = true
 
-    local bv = Instance.new("BodyVelocity")
-    bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-    bv.Velocity = Vector3.new(0, -50000, 0)
-    bv.Parent = RootPart
+        local savedData = { cframe = RootPart.CFrame }
+        Humanoid.PlatformStand = true
 
-    local bg = Instance.new("BodyGyro")
-    bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-    bg.P = 1000000
-    bg.Parent = RootPart
+        local bv = Instance.new("BodyVelocity")
+        bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+        bv.Velocity = Vector3.new(0, -50000, 0)
+        bv.Parent = RootPart
 
-    Workspace.FallenPartsDestroyHeight = 0/0
+        local bg = Instance.new("BodyGyro")
+        bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+        bg.P = 1000000
+        bg.Parent = RootPart
 
-    local startTime = tick()
-    local resetDuration = 1.0 -- Reduced duration for faster execution
+        Workspace.FallenPartsDestroyHeight = 0/0
 
-    currentResetConnection = RunService.Heartbeat:Connect(function()
-        if tick() - startTime > resetDuration or not TargetPlayer.Character or not TRootPart.Parent then
+        local startTime = tick()
+        local resetDuration = 1.0
+
+        local completed = false
+        local conn
+        conn = RunService.Heartbeat:Connect(function()
+            if tick() - startTime > resetDuration or not TargetPlayer.Character or not TRootPart.Parent then
+                Workspace.FallenPartsDestroyHeight = originalDestroyHeight
+                bv:Destroy()
+                bg:Destroy()
+                clearRootReference(RootPart)
+                fullyRestoreCharacter(Character, savedData)
+                if conn then conn:Disconnect() end
+                completed = true
+                return
+            end
+
+            if TRootPart and TRootPart.Parent and Character and Character.Parent then
+                local headPos = THead and THead.Position or (TRootPart.Position + Vector3.new(0, 2.5, 0))
+                RootPart.CFrame = CFrame.new(headPos) * CFrame.Angles(math.pi / 2, 0, 0)
+                RootPart.AssemblyLinearVelocity = Vector3.new(0, -50000, 0)
+                RootPart.AssemblyAngularVelocity = Vector3.new(7500, 7500, 7500)
+
+                for i = 1, 5 do
+                    touch(RootPart, TRootPart)
+                    if THead then touch(RootPart, THead) end
+                end
+                setRootReference(RootPart, TRootPart)
+            end
+        end)
+
+        while not completed and TargetPlayer.Parent do
+            task.wait(0.05)
+        end
+
+        if not completed then
             Workspace.FallenPartsDestroyHeight = originalDestroyHeight
-            bv:Destroy()
-            bg:Destroy()
+            if bv.Parent then bv:Destroy() end
+            if bg.Parent then bg:Destroy() end
             clearRootReference(RootPart)
             fullyRestoreCharacter(Character, savedData)
-            if currentResetConnection then
-                currentResetConnection:Disconnect()
-                currentResetConnection = nil
-            end
-            isResetting = false
-            return
+            if conn then conn:Disconnect() end
         end
 
-        if TRootPart and TRootPart.Parent and Character and Character.Parent then
-            local headPos = THead and THead.Position or (TRootPart.Position + Vector3.new(0, 2.5, 0))
-            RootPart.CFrame = CFrame.new(headPos) * CFrame.Angles(math.pi / 2, 0, 0)
-            RootPart.AssemblyLinearVelocity = Vector3.new(0, -50000, 0)
-            RootPart.AssemblyAngularVelocity = Vector3.new(7500, 7500, 7500)
+        isRestingGlobal = false
 
-            for i = 1, 5 do
-                touch(RootPart, TRootPart)
-                if THead then touch(RootPart, THead) end
-            end
-            setRootReference(RootPart, TRootPart)
+        -- Check if target successfully died/reset, if not loop to next attempt
+        task.wait(0.15)
+        local postHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
+        if not postHum or postHum.Health <= 0 then
+            break
         end
-    end)
+    end
 end
 
 local function killAll()
@@ -588,20 +617,16 @@ local function executeResetAll()
         killAllExceptOne()
     else
         local murderer = getAnyMurd()
-        local targets = {}
         local pList = Players:GetPlayers()
         for _, p in ipairs(pList) do
             if p ~= player and p ~= murderer and not isWhitelisted(p) then
-                table.insert(targets, p)
+                local tChar = p.Character
+                local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
+                if tHum and tHum.Health > 0 then
+                    resetPlayer(p, 1) -- Hardcoded to 1 attempt for reset all
+                    task.wait(0.2)
+                end
             end
-        end
-
-        for _, p in ipairs(targets) do
-            resetPlayer(p)
-            while isResetting do
-                task.wait()
-            end
-            task.wait(0.2)
         end
     end
 end
@@ -614,6 +639,8 @@ local function startResetAllMonitor()
     local thread = task.spawn(function()
         while resetAllEnabled do
             setNoclip(true)
+            roleCache.data = nil
+            roleCache.timestamp = 0
             local role = getMyRole() or getRole()
 
             if resetAllState == "waiting" then
@@ -683,7 +710,7 @@ local function startSheriffFling()
             if role ~= "Murderer" then
                 local target = getSheriff()
                 if target and target ~= player then
-                    resetPlayer(target)
+                    resetPlayer(target, 3) -- Hardcoded to 3 attempts for Sheriff
                     while getSheriff() and autoResetSheriffEnabled and ((getMyRole() or getRole()) ~= "Murderer") do
                         task.wait(0.5)
                     end
@@ -722,7 +749,7 @@ local function flingMurdererOnRespawn()
     local murd = getMurd()
     if murd then
         task.wait(0.5)
-        resetPlayer(murd)
+        resetPlayer(murd, 3) -- Hardcoded to 3 attempts for Murderer
         hasFlingedMurdererThisLife = true
     end
 end
@@ -833,7 +860,7 @@ task.spawn(function()
                 task.spawn(function()
                     task.wait(0.5)
                     local target = getMurd()
-                    if target then resetPlayer(target) end
+                    if target then resetPlayer(target, 3) end
                 end)
             end
         end
@@ -886,10 +913,6 @@ combat_section:AddSlider("Coin Aura Radius", 1, 8, 8, function(value)
     auraData.radius = value
 end)
 
-combat_section:AddSlider("Max Fling Attempts", 1, 20, 3, function(value)
-    maxFlingAttempts = value
-end)
-
 local function findGunDropPart()
     local gunDrop = workspace:FindFirstChild("GunDrop", true)
     if gunDrop and gunDrop:IsA("BasePart") then
@@ -899,6 +922,7 @@ local function findGunDropPart()
 end
 
 local function bringGun()
+    let character = player.Character
     local character = player.Character
     if not character then return end
     local rootPart = character:FindFirstChild("HumanoidRootPart")
