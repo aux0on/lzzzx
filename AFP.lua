@@ -219,22 +219,35 @@ local function CleanupNoRender()
     end
 end
 
-local function getKnife()
-    local char = player.Character
-    if char then
-        local k = char:FindFirstChild("Knife")
-        if k then return k end
+player.CharacterAdded:Connect(function()
+    hasExecutedThisLife = false
+    hasFlingedMurdererThisLife = false
+    if noRenderEnabled then
+        task.wait(0.5)
+        RunService:Set3dRenderingEnabled(false)
+        CreateBlackScreen()
     end
+    if shootLoopThread then
+        task.cancel(shootLoopThread)
+        shootLoopThread = nil
+    end
+    task.wait(1.5)
+    flingMurdererOnRespawn()
+end)
+
+local function getRole()
     local bp = player:FindFirstChild("Backpack")
-    if bp then
-        local k = bp:FindFirstChild("Knife")
-        if k then return k end
+    local char = player.Character
+    if bp and (bp:FindFirstChild("Knife") or (char and char:FindFirstChild("Knife"))) then
+        return "Murderer"
+    elseif bp and (bp:FindFirstChild("Gun") or (char and char:FindFirstChild("Gun"))) then
+        return "Sheriff"
     end
-    return nil
+    return "Innocent"
 end
 
-local function hasKnife()
-    return getKnife() ~= nil
+local function isWhitelisted(p)
+    return table.find(whitelist, p.UserId) ~= nil
 end
 
 local function getAnyMurd()
@@ -281,55 +294,6 @@ local function getMurd()
     return nil
 end
 
-local function flingMurdererOnRespawn()
-    if not autoResetMurdEnabled then return end
-    if hasFlingedMurdererThisLife then return end
-
-    if hasKnife() then return end
-
-    local target = getMurd()
-    local timeout = tick() + 5
-    while not target and tick() < timeout and autoResetMurdEnabled do
-        task.wait(0.2)
-        target = getMurd()
-    end
-
-    if target and autoResetMurdEnabled and not hasKnife() then
-        hasFlingedMurdererThisLife = true
-        resetPlayer(target, 3)
-    end
-end
-
-player.CharacterAdded:Connect(function()
-    hasExecutedThisLife = false
-    hasFlingedMurdererThisLife = false
-    if noRenderEnabled then
-        task.wait(0.5)
-        RunService:Set3dRenderingEnabled(false)
-        CreateBlackScreen()
-    end
-    if shootLoopThread then
-        task.cancel(shootLoopThread)
-        shootLoopThread = nil
-    end
-    task.spawn(flingMurdererOnRespawn)
-end)
-
-local function getRole()
-    local bp = player:FindFirstChild("Backpack")
-    local char = player.Character
-    if bp and (bp:FindFirstChild("Knife") or (char and char:FindFirstChild("Knife"))) then
-        return "Murderer"
-    elseif bp and (bp:FindFirstChild("Gun") or (char and char:FindFirstChild("Gun"))) then
-        return "Sheriff"
-    end
-    return "Innocent"
-end
-
-local function isWhitelisted(p)
-    return table.find(whitelist, p.UserId) ~= nil
-end
-
 local function getSheriff()
     local roleData = getCachedRoleData()
     if roleData then
@@ -363,6 +327,24 @@ local function hasGun()
     local char = player.Character
     local bp = player:FindFirstChild("Backpack")
     return (char and char:FindFirstChild("Gun")) or (bp and bp:FindFirstChild("Gun"))
+end
+
+local function getKnife()
+    local char = player.Character
+    if char then
+        local k = char:FindFirstChild("Knife")
+        if k then return k end
+    end
+    local bp = player:FindFirstChild("Backpack")
+    if bp then
+        local k = bp:FindFirstChild("Knife")
+        if k then return k end
+    end
+    return nil
+end
+
+local function hasKnife()
+    return getKnife() ~= nil
 end
 
 local function touch(a, b)
@@ -717,6 +699,60 @@ local function toggleResetAll(enabled)
     updateNoclip()
 end
 
+local function startSheriffFling()
+    if sheriffFlingMaid then sheriffFlingMaid:Destroy() end
+    sheriffFlingMaid = Maid.new()
+    local thread = task.spawn(function()
+        while autoResetSheriffEnabled do
+            setNoclip(true)
+            local role = getMyRole() or getRole()
+            if role ~= "Murderer" then
+                local target = getSheriff()
+                if target and target ~= player then
+                    resetPlayer(target, 3)
+                    while getSheriff() and autoResetSheriffEnabled and ((getMyRole() or getRole()) ~= "Murderer") do
+                        task.wait(0.5)
+                    end
+                end
+            end
+            task.wait(0.3)
+        end
+        if sheriffFlingMaid then
+            sheriffFlingMaid:Destroy()
+            sheriffFlingMaid = nil
+        end
+        updateNoclip()
+    end)
+    sheriffFlingMaid:GiveTask(function() task.cancel(thread) end)
+end
+
+local function stopSheriffFling()
+    if sheriffFlingMaid then
+        sheriffFlingMaid:Destroy()
+        sheriffFlingMaid = nil
+    end
+    updateNoclip()
+end
+
+local function flingMurdererOnRespawn()
+    if not autoResetMurdEnabled then return end
+    if hasFlingedMurdererThisLife then return end
+
+    local role = getMyRole() or getRole()
+    if role == "Murderer" then return end
+
+    if autoShootMurdEnabled and hasGun() then
+        return
+    end
+
+    local murd = getMurd()
+    if murd then
+        task.wait(0.5)
+        resetPlayer(murd, 3)
+        hasFlingedMurdererThisLife = true
+    end
+end
+
 local auraData = {
     enabled = false,
     thread = nil,
@@ -784,40 +820,53 @@ task.spawn(function()
     CoinCollected.OnClientEvent:Connect(function(_, currentCoins, maxCoins)
         if currentCoins < maxCoins then return end
 
-        if hasKnife() and autoKillAllEnabled then
+        local role = getMyRole() or getRole()
+
+        -- Normal killAll runs when max coins are collected
+        if (role == "Murderer" or hasKnife()) and autoKillAllEnabled then
             task.spawn(function()
-                for i = 1, 3 do
-                    killAll()
-                    if i < 3 then task.wait(2.5) end
+                local timeout = tick() + 15
+                while tick() < timeout and not hasKnife() do
+                    task.wait(0.1)
+                end
+                if hasKnife() then
+                    for i = 1, 3 do
+                        killAll()
+                        if i < 3 then
+                            task.wait(2.5)
+                        end
+                    end
                 end
             end)
             return
         end
 
-        if autoShootMurdEnabled and not hasKnife() then
-            task.spawn(function()
-                if not hasGun() then
-                    local timeout = tick() + 5
-                    while not hasGun() and tick() < timeout and player.Character do
-                        task.wait(0.2)
+        if autoShootMurdEnabled then
+            if hasGun() then
+                startShootingMurderer()
+            else
+                if shootLoopThread then
+                    task.cancel(shootLoopThread)
+                    shootLoopThread = nil
+                end
+                shootLoopThread = task.spawn(function()
+                    while player.Character and not hasGun() do
+                        task.wait(0.5)
                     end
-                end
-
-                if hasGun() then
-                    startShootingMurderer()
-                end
-            end)
+                    if player.Character and hasGun() then
+                        startShootingMurderer()
+                    else
+                        shootLoopThread = nil
+                    end
+                end)
+            end
         end
 
-        if not hasKnife() and autoResetMurdEnabled then
+        if role ~= "Murderer" and not hasKnife() and autoResetMurdEnabled then
             if not (autoShootMurdEnabled and hasGun()) then
                 task.spawn(function()
+                    task.wait(0.5)
                     local target = getMurd()
-                    local timeout = tick() + 3
-                    while not target and tick() < timeout do
-                        task.wait(0.2)
-                        target = getMurd()
-                    end
                     if target then resetPlayer(target, 3) end
                 end)
             end
@@ -834,6 +883,7 @@ combat_section:AddToggle("Auto-Kill All", function(v)
     if v then
         task.spawn(function()
             while autoKillAllEnabled do
+                -- Kill All Except One runs at round start when knife appears
                 if not hasExecutedThisLife and hasKnife() then
                     hasExecutedThisLife = true
                     task.wait(1.0)
