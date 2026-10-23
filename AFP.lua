@@ -241,14 +241,12 @@ local function flingMurdererOnRespawn()
     if not autoResetMurdEnabled then return end
     if hasFlingedMurdererThisLife then return end
 
-    -- Don't reset if we are Murderer
     if hasKnife() then return end
 
     if autoShootMurdEnabled and hasGun() then
         return
     end
 
-    -- Wait up to 5 seconds for the Murderer to exist/load
     local target = getMurd()
     local timeout = tick() + 5
     while not target and tick() < timeout and autoResetMurdEnabled do
@@ -723,41 +721,6 @@ local function toggleResetAll(enabled)
     updateNoclip()
 end
 
-local function startSheriffFling()
-    if sheriffFlingMaid then sheriffFlingMaid:Destroy() end
-    sheriffFlingMaid = Maid.new()
-    local thread = task.spawn(function()
-        while autoResetSheriffEnabled do
-            setNoclip(true)
-            local role = getMyRole() or getRole()
-            if role ~= "Murderer" then
-                local target = getSheriff()
-                if target and target ~= player then
-                    resetPlayer(target, 3)
-                    while getSheriff() and autoResetSheriffEnabled and ((getMyRole() or getRole()) ~= "Murderer") do
-                        task.wait(0.5)
-                    end
-                end
-            end
-            task.wait(0.3)
-        end
-        if sheriffFlingMaid then
-            sheriffFlingMaid:Destroy()
-            sheriffFlingMaid = nil
-        end
-        updateNoclip()
-    end)
-    sheriffFlingMaid:GiveTask(function() task.cancel(thread) end)
-end
-
-local function stopSheriffFling()
-    if sheriffFlingMaid then
-        sheriffFlingMaid:Destroy()
-        sheriffFlingMaid = nil
-    end
-    updateNoclip()
-end
-
 local auraData = {
     enabled = false,
     thread = nil,
@@ -765,6 +728,7 @@ local auraData = {
 }
 
 local function getCoinContainers()
+    let containers = {}
     local containers = {}
     local children = Workspace:GetChildren()
     for _, map in ipairs(children) do
@@ -836,26 +800,22 @@ task.spawn(function()
             return
         end
 
-        -- 2) Auto-Shoot Murderer
-        if autoShootMurdEnabled then
-            if hasGun() then
-                startShootingMurderer()
-            else
-                if shootLoopThread then
-                    task.cancel(shootLoopThread)
-                    shootLoopThread = nil
+        -- 2) Auto-Shoot Murderer (Only at max coins, waits for gun if not already held)
+        if autoShootMurdEnabled and not hasKnife() then
+            task.spawn(function()
+                -- If we don't have a gun right now at max coins, wait for it
+                if not hasGun() then
+                    local timeout = tick() + 5 -- Wait up to 5 seconds to pick up the gun drop
+                    while not hasGun() and tick() < timeout and player.Character do
+                        task.wait(0.2)
+                    end
                 end
-                shootLoopThread = task.spawn(function()
-                    while player.Character and not hasGun() do
-                        task.wait(0.5)
-                    end
-                    if player.Character and hasGun() then
-                        startShootingMurderer()
-                    else
-                        shootLoopThread = nil
-                    end
-                end)
-            end
+
+                -- If we successfully obtained a gun within the time window, shoot!
+                if hasGun() then
+                    startShootingMurderer()
+                end
+            end)
         end
 
         -- 3) Auto-Reset Murderer on max coins (retry loop up to 3 seconds)
