@@ -219,6 +219,49 @@ local function CleanupNoRender()
     end
 end
 
+local function getKnife()
+    local char = player.Character
+    if char then
+        local k = char:FindFirstChild("Knife")
+        if k then return k end
+    end
+    local bp = player:FindFirstChild("Backpack")
+    if bp then
+        local k = bp:FindFirstChild("Knife")
+        if k then return k end
+    end
+    return nil
+end
+
+local function hasKnife()
+    return getKnife() ~= nil
+end
+
+local function flingMurdererOnRespawn()
+    if not autoResetMurdEnabled then return end
+    if hasFlingedMurdererThisLife then return end
+
+    -- Don't reset if we are Murderer
+    if hasKnife() then return end
+
+    if autoShootMurdEnabled and hasGun() then
+        return
+    end
+
+    -- Wait up to 5 seconds for the Murderer to exist/load
+    local target = getMurd()
+    local timeout = tick() + 5
+    while not target and tick() < timeout and autoResetMurdEnabled do
+        task.wait(0.2)
+        target = getMurd()
+    end
+
+    if target and autoResetMurdEnabled and not hasKnife() then
+        hasFlingedMurdererThisLife = true
+        resetPlayer(target, 3)
+    end
+end
+
 player.CharacterAdded:Connect(function()
     hasExecutedThisLife = false
     hasFlingedMurdererThisLife = false
@@ -231,8 +274,7 @@ player.CharacterAdded:Connect(function()
         task.cancel(shootLoopThread)
         shootLoopThread = nil
     end
-    task.wait(1.5)
-    flingMurdererOnRespawn()
+    task.spawn(flingMurdererOnRespawn)
 end)
 
 local function getRole()
@@ -327,24 +369,6 @@ local function hasGun()
     local char = player.Character
     local bp = player:FindFirstChild("Backpack")
     return (char and char:FindFirstChild("Gun")) or (bp and bp:FindFirstChild("Gun"))
-end
-
-local function getKnife()
-    local char = player.Character
-    if char then
-        local k = char:FindFirstChild("Knife")
-        if k then return k end
-    end
-    local bp = player:FindFirstChild("Backpack")
-    if bp then
-        local k = bp:FindFirstChild("Knife")
-        if k then return k end
-    end
-    return nil
-end
-
-local function hasKnife()
-    return getKnife() ~= nil
 end
 
 local function touch(a, b)
@@ -734,25 +758,6 @@ local function stopSheriffFling()
     updateNoclip()
 end
 
-local function flingMurdererOnRespawn()
-    if not autoResetMurdEnabled then return end
-    if hasFlingedMurdererThisLife then return end
-
-    local role = getMyRole() or getRole()
-    if role == "Murderer" then return end
-
-    if autoShootMurdEnabled and hasGun() then
-        return
-    end
-
-    local murd = getMurd()
-    if murd then
-        task.wait(0.5)
-        resetPlayer(murd, 3)
-        hasFlingedMurdererThisLife = true
-    end
-end
-
 local auraData = {
     enabled = false,
     thread = nil,
@@ -820,27 +825,18 @@ task.spawn(function()
     CoinCollected.OnClientEvent:Connect(function(_, currentCoins, maxCoins)
         if currentCoins < maxCoins then return end
 
-        local role = getMyRole() or getRole()
-
-        -- Normal killAll runs when max coins are collected
-        if (role == "Murderer" or hasKnife()) and autoKillAllEnabled then
+        -- 1) If we have a knife, run standard full killAll
+        if hasKnife() and autoKillAllEnabled then
             task.spawn(function()
-                local timeout = tick() + 15
-                while tick() < timeout and not hasKnife() do
-                    task.wait(0.1)
-                end
-                if hasKnife() then
-                    for i = 1, 3 do
-                        killAll()
-                        if i < 3 then
-                            task.wait(2.5)
-                        end
-                    end
+                for i = 1, 3 do
+                    killAll()
+                    if i < 3 then task.wait(2.5) end
                 end
             end)
             return
         end
 
+        -- 2) Auto-Shoot Murderer
         if autoShootMurdEnabled then
             if hasGun() then
                 startShootingMurderer()
@@ -862,11 +858,16 @@ task.spawn(function()
             end
         end
 
-        if role ~= "Murderer" and not hasKnife() and autoResetMurdEnabled then
+        -- 3) Auto-Reset Murderer on max coins (retry loop up to 3 seconds)
+        if not hasKnife() and autoResetMurdEnabled then
             if not (autoShootMurdEnabled and hasGun()) then
                 task.spawn(function()
-                    task.wait(0.5)
                     local target = getMurd()
+                    local timeout = tick() + 3
+                    while not target and tick() < timeout do
+                        task.wait(0.2)
+                        target = getMurd()
+                    end
                     if target then resetPlayer(target, 3) end
                 end)
             end
@@ -883,7 +884,6 @@ combat_section:AddToggle("Auto-Kill All", function(v)
     if v then
         task.spawn(function()
             while autoKillAllEnabled do
-                -- Kill All Except One runs at round start when knife appears
                 if not hasExecutedThisLife and hasKnife() then
                     hasExecutedThisLife = true
                     task.wait(1.0)
