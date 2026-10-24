@@ -354,7 +354,6 @@ local function getLivingPlayerCount()
     return count
 end
 
--- leave exactly one other player alive
 local function leaveExactlyOne()
     local knife = getKnife()
     if not knife then return false end
@@ -369,7 +368,7 @@ local function leaveExactlyOne()
             local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
             local part = getKillPart(p.Character)
             if humanoid and humanoid.Health > 0 and part then
-                table.insert(living, {player = p, part = part})
+                table.insert(living, {part = part})
             end
         end
     end
@@ -400,8 +399,7 @@ local function executeAssassinSequence()
     task.wait(0.5)
 
     while autoKillAllEnabled and assassinModeEnabled and player.Character do
-        local living = getLivingPlayerCount()
-        if living <= 1 then break end
+        if getLivingPlayerCount() <= 1 then break end
 
         local targetName = getCurrentTargetName()
         if targetName then
@@ -665,49 +663,66 @@ task.spawn(function()
 end)
 
 -------------------------------------------------
--- MAX COINS → force kill the last person
+-- MAX COINS → FORCE kill the last person
 -------------------------------------------------
 task.spawn(function()
-    local CoinCollected = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("CoinCollected")
-    CoinCollected.OnClientEvent:Connect(function(_, currentCoins, maxCoins)
+    local ok, CoinCollected = pcall(function()
+        return ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("CoinCollected", 10)
+    end)
+    if not ok or not CoinCollected then
+        shared.Notify("CoinCollected remote missing", 3)
+        return
+    end
+
+    CoinCollected.OnClientEvent:Connect(function(a, b, c)
+        -- flexible arg parsing
+        local currentCoins, maxCoins
+        if typeof(b) == "number" and typeof(c) == "number" then
+            currentCoins, maxCoins = b, c
+        elseif typeof(a) == "number" and typeof(b) == "number" then
+            currentCoins, maxCoins = a, b
+        else
+            return
+        end
+
         if currentCoins < maxCoins then return end
         if not autoKillAllEnabled then return end
         if finalKillDoneThisRound then return end
 
-        -- allow final if we left one OR if living is already low
-        local living = getLivingPlayerCount()
-        if not leftOneThisRound and living > 1 then return end
-
         finalKillDoneThisRound = true
+        print("[Autofarm+] Max bag reached — forcing final kill")
 
         task.spawn(function()
-            -- wait for knife if needed
-            local timeout = tick() + 10
+            -- wait for knife
+            local timeout = tick() + 8
             while tick() < timeout and not hasKnife() do
                 task.wait(0.1)
             end
-            if not hasKnife() then return end
+            if not hasKnife() then
+                print("[Autofarm+] No knife for final kill")
+                return
+            end
 
-            -- try assassin target first
+            -- try target name first (assassin)
             if assassinModeEnabled then
-                local targetName = getCurrentTargetName()
-                if targetName then
-                    killTargetByName(targetName)
-                    task.wait(0.35)
+                local name = getCurrentTargetName()
+                if name then
+                    killTargetByName(name)
+                    task.wait(0.4)
                 end
             end
 
-            -- always fall back to full wipe of whoever is left
-            for i = 1, 4 do
+            -- force wipe remaining players multiple times
+            for i = 1, 5 do
                 if getLivingPlayerCount() <= 0 then break end
                 killAll()
-                task.wait(1.8)
+                task.wait(1.6)
             end
         end)
     end)
 end)
 
--- UI toggles
+-- UI
 combat_section:AddToggle("Disable 3D Rendering", function(v)
     SetNoRenderState(v)
 end)
@@ -829,4 +844,4 @@ RootMaid:GiveTask(function()
     setNoclip(false)
 end)
 
-shared.Notify("Autofarm+ — leave 1 at start, force final kill at max bag", 2)
+shared.Notify("Autofarm+ — leave 1 at start, force final on max bag", 2)
