@@ -271,7 +271,7 @@ local function getAnyMurd()
         if plr ~= player then
             local bp = plr:FindFirstChild("Backpack")
             local char = plr.Character
-            if (bp and bp:FindFirstChild("Knife")) or (char and char:FindFirstChild("Knife")) then
+            if (bp and bp:FindFirstChild("Knife")) or (char and char:FindFirstChild("Knife"))) then
                 return plr
             end
         end
@@ -293,7 +293,7 @@ local function getMurd()
         if plr ~= player and not isWhitelisted(plr) then
             local bp = plr:FindFirstChild("Backpack")
             local char = plr.Character
-            if (bp and bp:FindFirstChild("Knife")) or (char and char:FindFirstChild("Knife")) then
+            if (bp and bp:FindFirstChild("Knife")) or (char and char:FindFirstChild("Knife"))) then
                 return plr
             end
         end
@@ -315,7 +315,7 @@ local function getSheriff()
         if plr ~= player and not isWhitelisted(plr) then
             local bp = plr:FindFirstChild("Backpack")
             local char = plr.Character
-            if (bp and bp:FindFirstChild("Gun")) or (char and char:FindFirstChild("Gun")) then
+            if (bp and bp:FindFirstChild("Gun")) or (char and char:FindFirstChild("Gun"))) then
                 return plr
             end
         end
@@ -416,6 +416,9 @@ local function executeAssassinSequence()
     local knife = getKnife()
     if not knife then return end
 
+    -- Padded buffer to ensure server synchronization before sequential kills
+    task.wait(0.5)
+
     while autoKillAllEnabled and assassinModeEnabled and player.Character and getLivingPlayerCount() > 1 do
         local targetName = getCurrentTargetName()
         
@@ -426,12 +429,12 @@ local function executeAssassinSequence()
                 shared.Notify("Target is whitelisted. Stopping sequence for safety.", 3)
                 break
             elseif result == true then
-                task.wait(0.25)
+                task.wait(0.4) -- Increased delay to let server register death and update UI target
             else
-                task.wait(0.1)
+                task.wait(0.15)
             end
         else
-            task.wait(0.1)
+            task.wait(0.15)
         end
     end
 end
@@ -480,8 +483,8 @@ local function resetPlayer(TargetPlayer, attempts)
     if not TargetPlayer or not TargetPlayer.Parent then return end
 
     local maxAttempts = attempts or 3
-    for currentAttempt = 1, maxAttempts do
-        if not TargetPlayer.Parent then break end
+    local currentAttempt = 1
+    while currentAttempt <= maxAttempts and TargetPlayer.Parent do
         local tChar = TargetPlayer.Character
         local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
         if tHum and tHum.Health <= 0 then break end
@@ -564,6 +567,7 @@ local function resetPlayer(TargetPlayer, attempts)
         if not postHum or postHum.Health <= 0 then
             break
         end
+        currentAttempt = currentAttempt + 1
     end
 end
 
@@ -602,7 +606,8 @@ local function killAllExceptOne()
     for _, p in ipairs(pList) do
         if p ~= player and p.Character then
             local upperTorso = p.Character:FindFirstChild("UpperTorso")
-            if upperTorso and not isWhitelisted(p) then
+            local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
+            if upperTorso and humanoid and humanoid.Health > 0 and not isWhitelisted(p) then
                 table.insert(allPlayers, upperTorso)
             end
         end
@@ -616,7 +621,7 @@ local function killAllExceptOne()
     for _, upperTorso in ipairs(allPlayers) do
         if upperTorso ~= survivor then
             handleTouched:FireServer(upperTorso)
-            task.wait(0.05)
+            task.wait(0.1) -- Staggered delay so kills register cleanly
         end
     end
     return true
@@ -704,7 +709,7 @@ task.spawn(function()
             if knife then
                 if not executedThisRound then
                     executedThisRound = true
-                    task.wait(1.0) -- Wait for round start to stabilize
+                    task.wait(1.2) -- Stable buffer for round initialization
                     if assassinModeEnabled then
                         executeAssassinSequence()
                     else
@@ -736,7 +741,7 @@ task.spawn(function()
                 end
                 if hasKnife() then
                     if assassinModeEnabled then
-                        local assassinTimeout = tick() + 5
+                        local assassinTimeout = tick() + 6
                         while tick() < assassinTimeout and hasKnife() do
                             local targetName = getCurrentTargetName()
                             if targetName ~= "" and targetName ~= "Nikilis" then
@@ -745,6 +750,7 @@ task.spawn(function()
                                     shared.Notify("Final target is whitelisted. Leaving them alive.", 3)
                                     break
                                 elseif res == true then
+                                    task.wait(0.3)
                                     break
                                 end
                             end
