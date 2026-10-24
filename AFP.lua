@@ -406,13 +406,36 @@ local function getLivingPlayerCount()
     return count
 end
 
+-- ============ WAIT FOR DEATH (fixes replication race) ============
+local function waitForTargetDeath(targetPlayer, timeout)
+    local deadline = tick() + (timeout or 2)
+    while tick() < deadline do
+        if not targetPlayer or not targetPlayer.Parent then return true end
+        local char = targetPlayer.Character
+        if not char then return true end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health <= 0 then return true end
+        task.wait(0.05)
+    end
+    return false
+end
+
 -- ============ ORDERED KILL SEQUENCES ============
 -- Kill in assassin-target order. STOP if a whitelisted target is reached.
+-- Uses per-target death confirmation + a hard kill budget to prevent over-killing.
 local function killAllExceptOneInOrder()
     if not hasKnife() then return "NO_KNIFE" end
+
+    -- Hard backstop: never fire more than (initialAlive - 1) kills this round.
+    local initialAlive = getLivingPlayerCount()
+    if initialAlive <= 1 then return "DONE" end
+    local maxKills   = initialAlive - 1
+    local killsFired = 0
+
     local fails = 0
     while roundActive do
         if getLivingPlayerCount() <= 1 then return "DONE" end
+        if killsFired >= maxKills then return "DONE" end
 
         local targetName = getCurrentTargetName()
         if targetName == "" then
@@ -423,17 +446,38 @@ local function killAllExceptOneInOrder()
             shared.Notify("Whitelisted target: " .. targetName .. " — stopping.", 3)
             return "WHITELISTED"
         else
-            local result = killTargetByName(targetName)
-            if result == true then
-                fails = 0
-                task.wait(0.3)
-            elseif result == "WHITELISTED" then
-                shared.Notify("Whitelisted target: " .. targetName .. " — stopping.", 3)
-                return "WHITELISTED"
-            else
+            local targetPlayer = Players:FindFirstChild(targetName)
+            if not targetPlayer or targetPlayer == player then
                 fails = fails + 1
                 if fails > 30 then return "TIMEOUT" end
                 task.wait(0.15)
+            else
+                local tChar = targetPlayer.Character
+                local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
+                if not tHum or tHum.Health <= 0 then
+                    fails = fails + 1
+                    if fails > 30 then return "TIMEOUT" end
+                    task.wait(0.15)
+                else
+                    if getLivingPlayerCount() <= 1 or killsFired >= maxKills then
+                        return "DONE"
+                    end
+
+                    local result = killTargetByName(targetName)
+                    if result == true then
+                        killsFired = killsFired + 1
+                        fails = 0
+                        waitForTargetDeath(targetPlayer, 2)
+                        task.wait(0.1)
+                    elseif result == "WHITELISTED" then
+                        shared.Notify("Whitelisted target: " .. targetName .. " — stopping.", 3)
+                        return "WHITELISTED"
+                    else
+                        fails = fails + 1
+                        if fails > 30 then return "TIMEOUT" end
+                        task.wait(0.15)
+                    end
+                end
             end
         end
     end
@@ -456,10 +500,12 @@ local function killAllInOrder()
             shared.Notify("Whitelisted target: " .. targetName .. " — stopping.", 3)
             return "WHITELISTED"
         else
+            local targetPlayer = Players:FindFirstChild(targetName)
             local result = killTargetByName(targetName)
             if result == true then
                 fails = 0
-                task.wait(0.3)
+                if targetPlayer then waitForTargetDeath(targetPlayer, 2) end
+                task.wait(0.1)
             elseif result == "WHITELISTED" then
                 shared.Notify("Whitelisted target: " .. targetName .. " — stopping.", 3)
                 return "WHITELISTED"
