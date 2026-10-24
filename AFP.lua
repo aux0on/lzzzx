@@ -1,23 +1,21 @@
--- Standalone Auto-Kill All (Assassin Mode - Multi-Round Robust Fix)
+local shared = odh_shared_plugins
+task.spawn(function()
+    shared.load_from_github_url("/aux0on/CrashHandler/refs/heads/main/Prevention.lua")
+end)
+
+if shared.game_name ~= "Murder Mystery 2" then return end
+local afp = shared.CreateTab("Autofarm+", "/aux0on/AFPIcon/refs/heads/main/Untitled163_20260919023714")
+local combat_section = afp:AddSection("Autofarm+")
+local whitelist = {}
 
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local CoreGui = game:GetService("CoreGui")
-
 while not Players.LocalPlayer do task.wait() end
 local player = Players.LocalPlayer
 
-local whitelist = {}
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
 local autoKillAllEnabled = false
 local assassinModeEnabled = false
-
-local function notify(text)
-    game:GetService("StarterGui"):SetCore("SendNotification", {
-        Title = "Autofarm+",
-        Text = text,
-        Duration = 2,
-    })
-end
 
 local function isWhitelisted(p)
     if typeof(p) == "Instance" and p:IsA("Player") then
@@ -149,7 +147,6 @@ local function executeAssassinSequence()
     local knife = getKnife()
     if not knife then return end
 
-    -- Keep killing targets sequentially until exactly 1 living player remains
     while autoKillAllEnabled and assassinModeEnabled and player.Character and getLivingPlayerCount() > 1 do
         local targetName = getCurrentTargetName()
         
@@ -160,7 +157,7 @@ local function executeAssassinSequence()
                 task.wait(0.2)
             else
                 if killTargetByName(targetName) then
-                    task.wait(0.25) -- Brief pause for game UI/target to update
+                    task.wait(0.25)
                 else
                     task.wait(0.1)
                 end
@@ -171,7 +168,7 @@ local function executeAssassinSequence()
     end
 end
 
--- Round Start & Persistence Monitor (Fixes the multi-round bug)
+-- Round Start & Persistence Monitor
 task.spawn(function()
     local executedThisRound = false
     while true do
@@ -181,7 +178,7 @@ task.spawn(function()
             if knife then
                 if not executedThisRound then
                     executedThisRound = true
-                    task.wait(1.0) -- Wait for round start to stabilize
+                    task.wait(1.0)
                     if assassinModeEnabled then
                         executeAssassinSequence()
                     else
@@ -189,7 +186,6 @@ task.spawn(function()
                     end
                 end
             else
-                -- Knife is gone (round ended or player died), reset for next round
                 executedThisRound = false
             end
         else
@@ -198,7 +194,7 @@ task.spawn(function()
     end
 end)
 
--- Max Coins Event Listener (Kills the final target at max bag)
+-- Max Coins Event Listener
 task.spawn(function()
     local CoinCollected = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("CoinCollected")
     CoinCollected.OnClientEvent:Connect(function(_, currentCoins, maxCoins)
@@ -228,117 +224,34 @@ task.spawn(function()
     end)
 end)
 
--- Minimal Draggable GUI
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "StandaloneAssassinGUI"
-screenGui.ResetOnSpawn = false
-screenGui.DisplayOrder = 99999
-screenGui.IgnoreGuiInset = true
-
-local success = pcall(function()
-    screenGui.Parent = CoreGui
-end)
-if not success or not screenGui.Parent then
-    screenGui.Parent = player:WaitForChild("PlayerGui")
-end
-
-local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 210, 0, 140)
-frame.Position = UDim2.new(0.05, 0, 0.4, 0)
-frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-frame.BorderSizePixel = 0
-frame.Visible = true
-frame.Active = true
-frame.Draggable = true
-frame.Parent = screenGui
-
-local uiCorner = Instance.new("UICorner")
-uiCorner.CornerRadius = UDim.new(0, 8)
-uiCorner.Parent = frame
-
-local titleLabel = Instance.new("TextLabel")
-titleLabel.Size = UDim2.new(1, 0, 0, 30)
-titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "Assassin Autofarm"
-titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-titleLabel.TextSize = 14
-titleLabel.Font = Enum.Font.SourceSansBold
-titleLabel.Parent = frame
-
--- Auto-Kill All Toggle
-local toggleBtn = Instance.new("TextButton")
-toggleBtn.Size = UDim2.new(0.9, 0, 0, 28)
-toggleBtn.Position = UDim2.new(0.05, 0, 0.24, 0)
-toggleBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
-toggleBtn.Text = "Auto-Kill All: OFF"
-toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-toggleBtn.TextSize = 12
-toggleBtn.Font = Enum.Font.SourceSans
-toggleBtn.Parent = frame
-
-local btnCorner = Instance.new("UICorner")
-btnCorner.CornerRadius = UDim.new(0, 6)
-btnCorner.Parent = toggleBtn
-
-toggleBtn.MouseButton1Click:Connect(function()
-    autoKillAllEnabled = not autoKillAllEnabled
-    if autoKillAllEnabled then
-        toggleBtn.BackgroundColor3 = Color3.fromRGB(50, 180, 50)
-        toggleBtn.Text = "Auto-Kill All: ON"
-        notify("Auto-Kill All Enabled")
+combat_section:AddToggle("Auto-Kill All", function(v)
+    autoKillAllEnabled = v
+    if v then
+        shared.Notify("Auto-Kill All Enabled", 2)
     else
-        toggleBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
-        toggleBtn.Text = "Auto-Kill All: OFF"
-        notify("Auto-Kill All Disabled")
+        shared.Notify("Auto-Kill All Disabled", 2)
     end
 end)
 
--- Assassin Mode Toggle (Placed directly below Auto-Kill All)
-local assassinBtn = Instance.new("TextButton")
-assassinBtn.Size = UDim2.new(0.9, 0, 0, 28)
-assassinBtn.Position = UDim2.new(0.05, 0, 0.48, 0)
-assassinBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
-assassinBtn.Text = "Assassin Mode: OFF"
-assassinBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-assassinBtn.TextSize = 12
-assassinBtn.Font = Enum.Font.SourceSans
-assassinBtn.Parent = frame
-
-local assassinCorner = Instance.new("UICorner")
-assassinCorner.CornerRadius = UDim.new(0, 6)
-assassinCorner.Parent = assassinBtn
-
-assassinBtn.MouseButton1Click:Connect(function()
-    assassinModeEnabled = not assassinModeEnabled
-    if assassinModeEnabled then
-        assassinBtn.BackgroundColor3 = Color3.fromRGB(50, 180, 50)
-        assassinBtn.Text = "Assassin Mode: ON"
-        notify("Assassin Mode Enabled")
+combat_section:AddToggle("Assassin Mode", function(v)
+    assassinModeEnabled = v
+    if v then
+        shared.Notify("Assassin Mode Enabled", 2)
     else
-        assassinBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
-        assassinBtn.Text = "Assassin Mode: OFF"
-        notify("Assassin Mode Disabled")
+        shared.Notify("Assassin Mode Disabled", 2)
     end
 end)
 
--- Clear Whitelist Button
-local clearWhitelistBtn = Instance.new("TextButton")
-clearWhitelistBtn.Size = UDim2.new(0.9, 0, 0, 25)
-clearWhitelistBtn.Position = UDim2.new(0.05, 0, 0.74, 0)
-clearWhitelistBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-clearWhitelistBtn.Text = "Clear Whitelist"
-clearWhitelistBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
-clearWhitelistBtn.TextSize = 12
-clearWhitelistBtn.Font = Enum.Font.SourceSans
-clearWhitelistBtn.Parent = frame
+combat_section:AddPlayerDropdown("Whitelist Player", function(p)
+    if not table.find(whitelist, p.UserId) then
+        table.insert(whitelist, p.UserId)
+        shared.Notify(p.Name .. " whitelisted.", 2)
+    end
+end)
 
-local clearCorner2 = Instance.new("UICorner")
-clearCorner2.CornerRadius = UDim.new(0, 6)
-clearCorner2.Parent = clearWhitelistBtn
-
-clearWhitelistBtn.MouseButton1Click:Connect(function()
+combat_section:AddButton("Clear Whitelist", function()
     whitelist = {}
-    notify("Whitelist cleared")
+    shared.Notify("Whitelist cleared.", 2)
 end)
 
-notify("Standalone Assassin Autofarm loaded!")
+shared.Notify("Autofarm+ loaded successfully!", 1)
