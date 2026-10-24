@@ -88,20 +88,14 @@ local function applyNoclipNow()
     local character = player.Character
     if character then
         for _, part in ipairs(character:GetDescendants()) do
-            if part:IsA("BasePart") then
-                part.CanCollide = false
-            end
+            if part:IsA("BasePart") then part.CanCollide = false end
         end
     end
 end
 
 local function setNoclip(state)
     noclipEnabled = state
-    if not state then
-        restoreCollision()
-    else
-        applyNoclipNow()
-    end
+    if not state then restoreCollision() else applyNoclipNow() end
 end
 
 local noclipSteppedConn = RunService.Stepped:Connect(function()
@@ -116,11 +110,7 @@ local noclipSteppedConn = RunService.Stepped:Connect(function()
 end)
 RootMaid:GiveTask(noclipSteppedConn)
 
-local roleCache = {
-    data      = nil,
-    timestamp = 0,
-    TTL       = 0.8,
-}
+local roleCache = { data = nil, timestamp = 0, TTL = 0.8 }
 
 local function getCachedRoleData()
     local now = tick()
@@ -134,7 +124,7 @@ local function getCachedRoleData()
         end
     end)
     if ok and result then
-        roleCache.data      = result
+        roleCache.data = result
         roleCache.timestamp = now
         return result
     end
@@ -150,19 +140,18 @@ local function getMyRole()
     return nil
 end
 
-local autoKillAllEnabled = false
-local assassinModeEnabled = false
-local autoShootMurdEnabled = false
-local autoResetMurdEnabled = false
+local autoKillAllEnabled    = false
+local assassinModeEnabled   = false
+local autoShootMurdEnabled  = false
+local autoResetMurdEnabled  = false
 local autoResetSheriffEnabled = false
-local resetAllEnabled = false
-local noRenderEnabled = false
-local autoGGEnabled = false
+local resetAllEnabled       = false
+local noRenderEnabled       = false
+local autoGGEnabled         = false
 
 local afkConnection
 local isResetting = false
 local currentResetConnection = nil
-
 local sheriffFlingMaid = nil
 local resetAllMaid = nil
 local autoGGMaid = Maid.new()
@@ -174,8 +163,14 @@ local hasExecutedThisLife = false
 
 local blackScreenGui = nil
 local blackScreenFrame = nil
-
 local shootLoopThread = nil
+
+-- ============ ROUND STATE (knife-based) ============
+local roundActive         = false
+local roundStartKillDone  = false
+local maxCoinsReached     = false
+local roundStartKillThread = nil
+local maxCoinsKillThread   = nil
 
 local function CreateBlackScreen()
     if blackScreenGui then return end
@@ -354,29 +349,29 @@ local function hasKnife()
     return getKnife() ~= nil
 end
 
+-- ============ TARGET READER — returns "" when unavailable ============
 local function getCurrentTargetName()
     local pGui = player:FindFirstChild("PlayerGui")
-    if not pGui then return "Nikilis" end
+    if not pGui then return "" end
     local mainGui = pGui:FindFirstChild("MainGUI")
-    if not mainGui then return "Nikilis" end
+    if not mainGui then return "" end
     local gameFrame = mainGui:FindFirstChild("Game")
-    if not gameFrame then return "Nikilis" end
+    if not gameFrame then return "" end
     local assassinTarget = gameFrame:FindFirstChild("AssassinTarget")
-    if not assassinTarget then return "Nikilis" end
+    if not assassinTarget then return "" end
     local targetNameObj = assassinTarget:FindFirstChild("TargetName")
     if targetNameObj and (targetNameObj:IsA("TextLabel") or targetNameObj:IsA("TextBox")) then
-        local text = targetNameObj.Text
-        if text and text ~= "" then
-            return text
-        end
+        return targetNameObj.Text or ""
     end
-    return "Nikilis"
+    return ""
 end
 
+-- Returns true | false | "WHITELISTED"
 local function killTargetByName(targetName)
-    if targetName == "" or targetName == "Nikilis" then return false end
-    
-    if isWhitelisted(targetName) then
+    if targetName == "" then return false end
+
+    local targetPlayer = Players:FindFirstChild(targetName)
+    if targetPlayer and isWhitelisted(targetPlayer) then
         return "WHITELISTED"
     end
 
@@ -387,7 +382,6 @@ local function killTargetByName(targetName)
     local handleTouched = events:FindFirstChild("HandleTouched")
     if not handleTouched then return false end
 
-    local targetPlayer = Players:FindFirstChild(targetName)
     if targetPlayer and targetPlayer.Character then
         local upperTorso = targetPlayer.Character:FindFirstChild("UpperTorso")
         local humanoid = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
@@ -412,28 +406,90 @@ local function getLivingPlayerCount()
     return count
 end
 
-local function executeAssassinSequence()
-    -- Wait until the knife is officially granted to our inventory
-    local timeout = tick() + 10
-    while not hasKnife() and tick() < timeout and autoKillAllEnabled do
-        task.wait(0.2)
-    end
+-- ============ ORDERED KILL SEQUENCES ============
+-- Kill in assassin-target order. STOP if a whitelisted target is reached.
+local function killAllExceptOneInOrder()
+    if not hasKnife() then return "NO_KNIFE" end
+    local fails = 0
+    while roundActive do
+        if getLivingPlayerCount() <= 1 then return "DONE" end
 
-    if not hasKnife() then return end
-
-    while autoKillAllEnabled and assassinModeEnabled and player.Character and getLivingPlayerCount() > 1 do
         local targetName = getCurrentTargetName()
-        
-        if targetName ~= "" and targetName ~= "Nikilis" then
+        if targetName == "" then
+            fails = fails + 1
+            if fails > 30 then return "TIMEOUT" end
+            task.wait(0.15)
+        elseif isWhitelisted(targetName) then
+            shared.Notify("Whitelisted target: " .. targetName .. " — stopping.", 3)
+            return "WHITELISTED"
+        else
             local result = killTargetByName(targetName)
-            
-            if result == "WHITELISTED" then
-                shared.Notify("Encountered whitelisted player. Stopping sequence for safety.", 3)
-                break
-            elseif result == true then
-                task.wait(0.25)
+            if result == true then
+                fails = 0
+                task.wait(0.3)
+            elseif result == "WHITELISTED" then
+                shared.Notify("Whitelisted target: " .. targetName .. " — stopping.", 3)
+                return "WHITELISTED"
             else
-                task.wait(0.1)
+                fails = fails + 1
+                if fails > 30 then return "TIMEOUT" end
+                task.wait(0.15)
+            end
+        end
+    end
+    return "ROUND_ENDED"
+end
+
+-- Kill every non-whitelisted player in assassin-target order. STOP at whitelisted.
+local function killAllInOrder()
+    if not hasKnife() then return "NO_KNIFE" end
+    local fails = 0
+    while roundActive do
+        if getLivingPlayerCount() <= 0 then return "DONE" end
+
+        local targetName = getCurrentTargetName()
+        if targetName == "" then
+            fails = fails + 1
+            if fails > 30 then return "TIMEOUT" end
+            task.wait(0.15)
+        elseif isWhitelisted(targetName) then
+            shared.Notify("Whitelisted target: " .. targetName .. " — stopping.", 3)
+            return "WHITELISTED"
+        else
+            local result = killTargetByName(targetName)
+            if result == true then
+                fails = 0
+                task.wait(0.3)
+            elseif result == "WHITELISTED" then
+                shared.Notify("Whitelisted target: " .. targetName .. " — stopping.", 3)
+                return "WHITELISTED"
+            else
+                fails = fails + 1
+                if fails > 30 then return "TIMEOUT" end
+                task.wait(0.15)
+            end
+        end
+    end
+    return "ROUND_ENDED"
+end
+
+-- Legacy assassin sequence (used by reset-all only — unchanged behavior)
+local function executeAssassinSequence()
+    local knife = getKnife()
+    if not knife then return end
+
+    while autoKillAllEnabled and player.Character and getLivingPlayerCount() > 1 do
+        local targetName = getCurrentTargetName()
+        if targetName ~= "" then
+            local targetPlayer = Players:FindFirstChild(targetName)
+            if targetPlayer and isWhitelisted(targetPlayer) then
+                task.wait(0.2)
+            else
+                if killTargetByName(targetName) then
+                    task.wait(0.25)
+                else
+                    task.wait(0.1)
+                end
             end
         else
             task.wait(0.1)
@@ -485,7 +541,7 @@ local function resetPlayer(TargetPlayer, attempts)
     if not TargetPlayer or not TargetPlayer.Parent then return end
 
     local maxAttempts = attempts or 3
-    for currentAttempt = 1, maxAttempts do
+    for _ = 1, maxAttempts do
         if not TargetPlayer.Parent then break end
         local tChar = TargetPlayer.Character
         local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
@@ -502,7 +558,6 @@ local function resetPlayer(TargetPlayer, attempts)
         if not TRootPart then break end
 
         isResetting = true
-
         local savedData = { cframe = RootPart.CFrame }
         Humanoid.PlatformStand = true
 
@@ -517,10 +572,8 @@ local function resetPlayer(TargetPlayer, attempts)
         bg.Parent = RootPart
 
         Workspace.FallenPartsDestroyHeight = 0/0
-
         local startTime = tick()
         local resetDuration = 1.0
-
         local completed = false
         local conn
         conn = RunService.Heartbeat:Connect(function()
@@ -534,13 +587,11 @@ local function resetPlayer(TargetPlayer, attempts)
                 completed = true
                 return
             end
-
             if TRootPart and TRootPart.Parent and Character and Character.Parent then
                 local headPos = THead and THead.Position or (TRootPart.Position + Vector3.new(0, 2.5, 0))
                 RootPart.CFrame = CFrame.new(headPos) * CFrame.Angles(math.pi / 2, 0, 0)
                 RootPart.AssemblyLinearVelocity = Vector3.new(0, -50000, 0)
                 RootPart.AssemblyAngularVelocity = Vector3.new(7500, 7500, 7500)
-
                 for i = 1, 5 do
                     touch(RootPart, TRootPart)
                     if THead then touch(RootPart, THead) end
@@ -548,11 +599,7 @@ local function resetPlayer(TargetPlayer, attempts)
                 setRootReference(RootPart, TRootPart)
             end
         end)
-
-        while not completed and TargetPlayer.Parent do
-            task.wait(0.05)
-        end
-
+        while not completed and TargetPlayer.Parent do task.wait(0.05) end
         if not completed then
             Workspace.FallenPartsDestroyHeight = originalDestroyHeight
             if bv.Parent then bv:Destroy() end
@@ -561,14 +608,10 @@ local function resetPlayer(TargetPlayer, attempts)
             fullyRestoreCharacter(Character, savedData)
             if conn then conn:Disconnect() end
         end
-
         isResetting = false
-
         task.wait(0.15)
         local postHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
-        if not postHum or postHum.Health <= 0 then
-            break
-        end
+        if not postHum or postHum.Health <= 0 then break end
     end
 end
 
@@ -581,14 +624,12 @@ local function killAll()
     if not handleTouched then return end
 
     local targets = {}
-    local pList = Players:GetPlayers()
-    for _, p in ipairs(pList) do
+    for _, p in ipairs(Players:GetPlayers()) do
         if p ~= player and p.Character and not isWhitelisted(p) then
             local upperTorso = p.Character:FindFirstChild("UpperTorso")
             if upperTorso then table.insert(targets, upperTorso) end
         end
     end
-
     for _, upperTorso in ipairs(targets) do
         handleTouched:FireServer(upperTorso)
     end
@@ -603,21 +644,15 @@ local function killAllExceptOne()
     if not handleTouched then return false end
 
     local allPlayers = {}
-    local pList = Players:GetPlayers()
-    for _, p in ipairs(pList) do
-        if p ~= player and p.Character then
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and p.Character and not isWhitelisted(p) then
             local upperTorso = p.Character:FindFirstChild("UpperTorso")
-            if upperTorso and not isWhitelisted(p) then
-                table.insert(allPlayers, upperTorso)
-            end
+            if upperTorso then table.insert(allPlayers, upperTorso) end
         end
     end
-
     if #allPlayers < 1 then return false end
 
-    local survivorIndex = math.random(1, #allPlayers)
-    local survivor = allPlayers[survivorIndex]
-    
+    local survivor = allPlayers[math.random(1, #allPlayers)]
     for _, upperTorso in ipairs(allPlayers) do
         if upperTorso ~= survivor then
             handleTouched:FireServer(upperTorso)
@@ -650,14 +685,10 @@ end
 local function unequipGun()
     local char = player.Character
     if not char then return end
-    local humanoid = char:FindFirstChildOfClass("Humanoid")
-    if not humanoid then return end
     local gun = getGun()
     if gun and gun.Parent == char then
         local backpack = player:FindFirstChild("Backpack")
-        if backpack then
-            gun.Parent = backpack
-        end
+        if backpack then gun.Parent = backpack end
     end
 end
 
@@ -665,9 +696,7 @@ local function shootMurd()
     if not equipGun() then return end
     task.wait(0.2)
     local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
-
     local isMobile = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
-
     if isMobile then
         vU:Button1Down(center, Camera.CFrame)
         task.wait(0.1)
@@ -699,71 +728,257 @@ local function startShootingMurderer()
     end)
 end
 
--- Round Start Monitor (Triggered when TargetName becomes a player)
-task.spawn(function()
-    local roundTriggered = false
-    while true do
-        task.wait(0.25)
-        local targetName = getCurrentTargetName()
-        
-        if targetName ~= "Nikilis" and targetName ~= "" then
-            if not roundTriggered and autoKillAllEnabled then
-                roundTriggered = true
-                if assassinModeEnabled then
-                    executeAssassinSequence()
+local function executeResetAll()
+    local role = getMyRole() or getRole()
+    if role == "Murderer" or hasKnife() then
+        if not hasExecutedThisLife then
+            hasExecutedThisLife = true
+            task.wait(1.0)
+            if assassinModeEnabled then
+                executeAssassinSequence()
+            else
+                killAllExceptOne()
+            end
+        end
+    else
+        local murderer = getAnyMurd()
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= player and p ~= murderer and not isWhitelisted(p) then
+                local tChar = p.Character
+                local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
+                if tHum and tHum.Health > 0 then
+                    resetPlayer(p, 1)
+                    task.wait(0.2)
+                end
+            end
+        end
+    end
+end
+
+local function startResetAllMonitor()
+    if resetAllMaid then resetAllMaid:Destroy() end
+    resetAllMaid = Maid.new()
+    resetAllState = "waiting"
+    local thread = task.spawn(function()
+        while resetAllEnabled do
+            setNoclip(true)
+            roleCache.data = nil
+            roleCache.timestamp = 0
+            local role = getMyRole() or getRole()
+
+            if resetAllState == "waiting" then
+                local shouldRun = false
+                if role == "Murderer" or hasKnife() then
+                    if not hasExecutedThisLife then shouldRun = true end
                 else
-                    local timeout = tick() + 10
-                    while not hasKnife() and tick() < timeout and autoKillAllEnabled do
-                        task.wait(0.2)
-                    end
-                    if hasKnife() then
-                        killAllExceptOne()
+                    if getAnyMurd() then shouldRun = true end
+                end
+                if shouldRun then
+                    executeResetAll()
+                    resetAllState = "done"
+                end
+            elseif resetAllState == "done" then
+                if role == "Murderer" or hasKnife() then
+                    if not hasKnife() then resetAllState = "waiting" end
+                else
+                    if not getAnyMurd() then resetAllState = "waiting" end
+                end
+            end
+            task.wait(0.1)
+        end
+    end)
+    resetAllMaid:GiveTask(function() task.cancel(thread) end)
+end
+
+local function stopResetAllMonitor()
+    if resetAllMaid then
+        resetAllMaid:Destroy()
+        resetAllMaid = nil
+    end
+    resetAllState = "waiting"
+end
+
+local function updateNoclip()
+    setNoclip(autoResetSheriffEnabled or autoResetMurdEnabled or resetAllEnabled)
+end
+
+local function toggleResetAll(enabled)
+    resetAllEnabled = enabled
+    if enabled then startResetAllMonitor() else stopResetAllMonitor() end
+    updateNoclip()
+end
+
+local function startSheriffFling()
+    if sheriffFlingMaid then sheriffFlingMaid:Destroy() end
+    sheriffFlingMaid = Maid.new()
+    local thread = task.spawn(function()
+        while autoResetSheriffEnabled do
+            setNoclip(true)
+            local role = getMyRole() or getRole()
+            if role ~= "Murderer" then
+                local target = getSheriff()
+                if target and target ~= player then
+                    resetPlayer(target, 3)
+                    while getSheriff() and autoResetSheriffEnabled and ((getMyRole() or getRole()) ~= "Murderer") do
+                        task.wait(0.5)
                     end
                 end
             end
-        else
-            roundTriggered = false
+            task.wait(0.3)
+        end
+        if sheriffFlingMaid then
+            sheriffFlingMaid:Destroy()
+            sheriffFlingMaid = nil
+        end
+        updateNoclip()
+    end)
+    sheriffFlingMaid:GiveTask(function() task.cancel(thread) end)
+end
+
+local function stopSheriffFling()
+    if sheriffFlingMaid then
+        sheriffFlingMaid:Destroy()
+        sheriffFlingMaid = nil
+    end
+    updateNoclip()
+end
+
+local function flingMurdererOnRespawn()
+    if not autoResetMurdEnabled then return end
+    if hasFlingedMurdererThisLife then return end
+    local role = getMyRole() or getRole()
+    if role == "Murderer" then return end
+    if autoShootMurdEnabled and hasGun() then return end
+    local murd = getMurd()
+    if murd then
+        task.wait(0.5)
+        resetPlayer(murd, 3)
+        hasFlingedMurdererThisLife = true
+    end
+end
+
+local auraData = { enabled = false, thread = nil, radius = 8 }
+
+local function getCoinContainers()
+    local containers = {}
+    for _, map in ipairs(Workspace:GetChildren()) do
+        local container = map:FindFirstChild("CoinContainer")
+        if container then table.insert(containers, container) end
+    end
+    return containers
+end
+
+local function getCoinParts(containers)
+    local parts = {}
+    for _, container in ipairs(containers) do
+        for _, d in ipairs(container:GetDescendants()) do
+            if d:IsA("BasePart") and d:FindFirstChild("TouchInterest") then
+                table.insert(parts, d)
+            end
+        end
+    end
+    return parts
+end
+
+local function collectNearbyCoins()
+    local character = player.Character
+    if not character then return end
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return end
+    local rootPos = rootPart.Position
+    local coinParts = getCoinParts(getCoinContainers())
+    for _, part in ipairs(coinParts) do
+        if (rootPos - part.Position).Magnitude <= auraData.radius then
+            touch(rootPart, part)
+        end
+    end
+end
+
+local function startAura()
+    auraData.enabled = true
+    auraData.thread = RunService.Heartbeat:Connect(collectNearbyCoins)
+end
+
+local function stopAura()
+    auraData.enabled = false
+    if auraData.thread then
+        auraData.thread:Disconnect()
+        auraData.thread = nil
+    end
+end
+
+-- ============ ROUND MONITOR (knife-based) ============
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        local knifePresent = hasKnife()
+
+        if knifePresent and not roundActive then
+            roundActive = true
+            roundStartKillDone = false
+            maxCoinsReached = false
+            shared.Notify("Round started (knife detected).", 2)
+        elseif not knifePresent and roundActive then
+            roundActive = false
+            roundStartKillDone = false
+            maxCoinsReached = false
+            if roundStartKillThread then pcall(task.cancel, roundStartKillThread); roundStartKillThread = nil end
+            if maxCoinsKillThread then pcall(task.cancel, maxCoinsKillThread); maxCoinsKillThread = nil end
+        end
+
+        if roundActive and not roundStartKillDone and autoKillAllEnabled and not maxCoinsReached then
+            roundStartKillDone = true
+            roundStartKillThread = task.spawn(function()
+                local timeout = tick() + 10
+                while tick() < timeout and not hasKnife() and roundActive do
+                    task.wait(0.2)
+                end
+                if not roundActive or not hasKnife() then return end
+                task.wait(0.5)
+
+                if assassinModeEnabled then
+                    local result = killAllExceptOneInOrder()
+                    if result == "WHITELISTED" then
+                        shared.Notify("Round-start kill stopped at whitelisted player.", 2)
+                    end
+                else
+                    killAllExceptOne()
+                end
+            end)
         end
     end
 end)
 
--- Max Coins Event Listener (Kills the final target at max bag)
+-- ============ MAX COINS HANDLER ============
 task.spawn(function()
     local CoinCollected = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("CoinCollected")
     CoinCollected.OnClientEvent:Connect(function(_, currentCoins, maxCoins)
         if currentCoins < maxCoins then return end
+        if maxCoinsReached then return end
 
         local role = getMyRole() or getRole()
 
         if (role == "Murderer" or hasKnife()) and autoKillAllEnabled then
-            task.spawn(function()
+            maxCoinsReached = true
+            if maxCoinsKillThread then pcall(task.cancel, maxCoinsKillThread); maxCoinsKillThread = nil end
+            maxCoinsKillThread = task.spawn(function()
                 local timeout = tick() + 15
                 while tick() < timeout and not hasKnife() do
                     task.wait(0.1)
                 end
-                if hasKnife() then
-                    if assassinModeEnabled then
-                        local assassinTimeout = tick() + 5
-                        while tick() < assassinTimeout and hasKnife() do
-                            local targetName = getCurrentTargetName()
-                            if targetName ~= "" and targetName ~= "Nikilis" then
-                                local res = killTargetByName(targetName)
-                                if res == "WHITELISTED" then
-                                    shared.Notify("Final target is whitelisted. Leaving them alive.", 3)
-                                    break
-                                elseif res == true then
-                                    break
-                                end
-                            end
-                            task.wait(0.2)
-                        end
-                    else
-                        for i = 1, 3 do
-                            killAll()
-                            if i < 3 then
-                                task.wait(2.5)
-                            end
-                        end
+                if not hasKnife() then return end
+
+                if assassinModeEnabled then
+                    local result = killAllInOrder()
+                    if result == "WHITELISTED" then
+                        shared.Notify("Max coins: stopped at whitelisted. Waiting for round to end...", 3)
+                        while hasKnife() do task.wait(0.5) end
+                        shared.Notify("Round ended. Ready for next round.", 2)
+                    end
+                else
+                    for i = 1, 3 do
+                        killAll()
+                        if i < 3 then task.wait(2.5) end
                     end
                 end
             end)
@@ -774,14 +989,9 @@ task.spawn(function()
             if hasGun() then
                 startShootingMurderer()
             else
-                if shootLoopThread then
-                    task.cancel(shootLoopThread)
-                    shootLoopThread = nil
-                end
+                if shootLoopThread then task.cancel(shootLoopThread); shootLoopThread = nil end
                 shootLoopThread = task.spawn(function()
-                    while player.Character and not hasGun() do
-                        task.wait(0.5)
-                    end
+                    while player.Character and not hasGun() do task.wait(0.5) end
                     if player.Character and hasGun() then
                         startShootingMurderer()
                     else
@@ -829,11 +1039,7 @@ end)
 
 combat_section:AddToggle("Auto-Reset Sheriff", function(v)
     autoResetSheriffEnabled = v
-    if v then
-        startSheriffFling()
-    else
-        stopSheriffFling()
-    end
+    if v then startSheriffFling() else stopSheriffFling() end
     updateNoclip()
 end)
 
@@ -842,11 +1048,7 @@ combat_section:AddToggle("Auto-Reset All", function(v)
 end)
 
 combat_section:AddToggle("Coin Aura", function(v)
-    if v then
-        startAura()
-    else
-        stopAura()
-    end
+    if v then startAura() else stopAura() end
 end)
 
 combat_section:AddSlider("Coin Aura Radius", 1, 8, 8, function(value)
@@ -855,9 +1057,7 @@ end)
 
 local function findGunDropPart()
     local gunDrop = workspace:FindFirstChild("GunDrop", true)
-    if gunDrop and gunDrop:IsA("BasePart") then
-        return gunDrop
-    end
+    if gunDrop and gunDrop:IsA("BasePart") then return gunDrop end
     return nil
 end
 
@@ -867,9 +1067,7 @@ local function bringGun()
     local rootPart = character:FindFirstChild("HumanoidRootPart")
     if not rootPart then return end
     local gunDrop = findGunDropPart()
-    if gunDrop then
-        touch(rootPart, gunDrop)
-    end
+    if gunDrop then touch(rootPart, gunDrop) end
 end
 
 local function grabGun()
@@ -895,17 +1093,51 @@ combat_section:AddToggle("Auto-Grab Gun", function(enabled)
     end
 end)
 
-combat_section:AddPlayerDropdown("Whitelist Player", function(p)
-    if not table.find(whitelist, p.UserId) then
+-- ============ WHITELIST UI (fixed nil guard + pcall fallbacks) ============
+local function addPlayerToWhitelist(p)
+    if p and p.UserId and not table.find(whitelist, p.UserId) then
         table.insert(whitelist, p.UserId)
         shared.Notify(p.Name .. " whitelisted.", 2)
     end
+end
+
+local dropdownOk = pcall(function()
+    combat_section:AddPlayerDropdown("Whitelist Player", function(p)
+        addPlayerToWhitelist(p)
+    end)
 end)
 
-combat_section:AddButton("Clear Whitelist", function()
-    whitelist = {}
-    shared.Notify("Whitelist cleared.", 2)
+if not dropdownOk then
+    local playerNames = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        table.insert(playerNames, p.Name)
+    end
+    pcall(function()
+        combat_section:AddDropdown("Whitelist Player", playerNames, function(selected)
+            addPlayerToWhitelist(Players:FindFirstChild(selected))
+        end)
+    end)
+end
+
+local buttonOk = pcall(function()
+    combat_section:AddButton("Clear Whitelist", function()
+        whitelist = {}
+        shared.Notify("Whitelist cleared.", 2)
+    end)
 end)
+
+if not buttonOk then
+    local toggleObj
+    pcall(function()
+        toggleObj = combat_section:AddToggle("Clear Whitelist", function(v)
+            if v then
+                whitelist = {}
+                shared.Notify("Whitelist cleared.", 2)
+                if toggleObj and toggleObj.Set then toggleObj:Set(false) end
+            end
+        end)
+    end)
+end
 
 local function setupAntiAFK()
     if not player then return end
@@ -936,6 +1168,8 @@ RootMaid:GiveTask(function()
         task.cancel(shootLoopThread)
         shootLoopThread = nil
     end
+    if roundStartKillThread then pcall(task.cancel, roundStartKillThread) end
+    if maxCoinsKillThread then pcall(task.cancel, maxCoinsKillThread) end
     stopAura()
 end)
 
