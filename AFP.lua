@@ -165,12 +165,12 @@ local blackScreenGui = nil
 local blackScreenFrame = nil
 local shootLoopThread = nil
 
--- ============ ROUND STATE (knife-based) ============
 local roundActive         = false
 local roundStartKillDone  = false
 local maxCoinsReached     = false
 local roundStartKillThread = nil
 local maxCoinsKillThread   = nil
+local survivorPlayer      = nil
 
 local function CreateBlackScreen()
     if blackScreenGui then return end
@@ -349,7 +349,6 @@ local function hasKnife()
     return getKnife() ~= nil
 end
 
--- ============ TARGET READER — returns "" when unavailable ============
 local function getCurrentTargetName()
     local pGui = player:FindFirstChild("PlayerGui")
     if not pGui then return "" end
@@ -366,14 +365,10 @@ local function getCurrentTargetName()
     return ""
 end
 
--- Returns true | false | "WHITELISTED"
 local function killTargetByName(targetName)
     if targetName == "" then return false end
-
     local targetPlayer = Players:FindFirstChild(targetName)
-    if targetPlayer and isWhitelisted(targetPlayer) then
-        return "WHITELISTED"
-    end
+    if targetPlayer and isWhitelisted(targetPlayer) then return "WHITELISTED" end
 
     local knife = getKnife()
     if not knife then return false end
@@ -406,120 +401,126 @@ local function getLivingPlayerCount()
     return count
 end
 
--- ============ WAIT FOR DEATH (fixes replication race) ============
-local function waitForTargetDeath(targetPlayer, timeout)
-    local deadline = tick() + (timeout or 2)
-    while tick() < deadline do
-        if not targetPlayer or not targetPlayer.Parent then return true end
-        local char = targetPlayer.Character
-        if not char then return true end
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if not hum or hum.Health <= 0 then return true end
-        task.wait(0.05)
+local function performRoundStartKill()
+    local knife = getKnife()
+    if not knife then return end
+    local events = knife:FindFirstChild("Events")
+    if not events then return end
+    local handleTouched = events:FindFirstChild("HandleTouched")
+    if not handleTouched then return end
+
+    local loadDeadline = tick() + 1
+    while tick() < loadDeadline do
+        local allLoaded = true
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= player and not p.Character then
+                allLoaded = false
+                break
+            end
+        end
+        if allLoaded then break end
+        task.wait(0.1)
     end
-    return false
-end
 
--- ============ ORDERED KILL SEQUENCES ============
--- Kill in assassin-target order. STOP if a whitelisted target is reached.
--- Uses per-target death confirmation + a hard kill budget to prevent over-killing.
-local function killAllExceptOneInOrder()
-    if not hasKnife() then return "NO_KNIFE" end
+    local candidates = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and not isWhitelisted(p) and p.Character then
+            local ut = p.Character:FindFirstChild("UpperTorso")
+            local hum = p.Character:FindFirstChildOfClass("Humanoid")
+            if ut and hum and hum.Health > 0 then
+                table.insert(candidates, p)
+            end
+        end
+    end
 
-    -- Hard backstop: never fire more than (initialAlive - 1) kills this round.
-    local initialAlive = getLivingPlayerCount()
-    if initialAlive <= 1 then return "DONE" end
-    local maxKills   = initialAlive - 1
-    local killsFired = 0
+    if #candidates == 0 then
+        survivorPlayer = nil
+        return
+    end
+    if #candidates == 1 then
+        survivorPlayer = candidates[1]
+        return
+    end
 
-    local fails = 0
-    while roundActive do
-        if getLivingPlayerCount() <= 1 then return "DONE" end
-        if killsFired >= maxKills then return "DONE" end
+    survivorPlayer = candidates[math.random(1, #candidates)]
 
-        local targetName = getCurrentTargetName()
-        if targetName == "" then
-            fails = fails + 1
-            if fails > 30 then return "TIMEOUT" end
-            task.wait(0.15)
-        elseif isWhitelisted(targetName) then
-            shared.Notify("Whitelisted target: " .. targetName .. " — stopping.", 3)
-            return "WHITELISTED"
-        else
-            local targetPlayer = Players:FindFirstChild(targetName)
-            if not targetPlayer or targetPlayer == player then
-                fails = fails + 1
-                if fails > 30 then return "TIMEOUT" end
-                task.wait(0.15)
-            else
-                local tChar = targetPlayer.Character
-                local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
-                if not tHum or tHum.Health <= 0 then
-                    fails = fails + 1
-                    if fails > 30 then return "TIMEOUT" end
-                    task.wait(0.15)
-                else
-                    if getLivingPlayerCount() <= 1 or killsFired >= maxKills then
-                        return "DONE"
-                    end
-
-                    local result = killTargetByName(targetName)
-                    if result == true then
-                        killsFired = killsFired + 1
-                        fails = 0
-                        waitForTargetDeath(targetPlayer, 2)
-                        task.wait(0.1)
-                    elseif result == "WHITELISTED" then
-                        shared.Notify("Whitelisted target: " .. targetName .. " — stopping.", 3)
-                        return "WHITELISTED"
-                    else
-                        fails = fails + 1
-                        if fails > 30 then return "TIMEOUT" end
-                        task.wait(0.15)
-                    end
+    local fired = {}
+    if assassinModeEnabled then
+        local firstTargetName = getCurrentTargetName()
+        if firstTargetName ~= "" then
+            local firstP = Players:FindFirstChild(firstTargetName)
+            if firstP and firstP ~= survivorPlayer and not isWhitelisted(firstP) then
+                local ut = firstP.Character and firstP.Character:FindFirstChild("UpperTorso")
+                local hum = firstP.Character and firstP.Character:FindFirstChildOfClass("Humanoid")
+                if ut and hum and hum.Health > 0 then
+                    pcall(function() handleTouched:FireServer(ut) end)
+                    fired[firstP] = true
                 end
             end
         end
     end
-    return "ROUND_ENDED"
+
+    for _, p in ipairs(candidates) do
+        if p ~= survivorPlayer and not fired[p] then
+            local char = p.Character
+            if char then
+                local ut = char:FindFirstChild("UpperTorso")
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if ut and hum and hum.Health > 0 then
+                    pcall(function() handleTouched:FireServer(ut) end)
+                end
+            end
+        end
+        task.wait(0.05)
+    end
 end
 
--- Kill every non-whitelisted player in assassin-target order. STOP at whitelisted.
-local function killAllInOrder()
-    if not hasKnife() then return "NO_KNIFE" end
-    local fails = 0
-    while roundActive do
-        if getLivingPlayerCount() <= 0 then return "DONE" end
+local function performMaxBagKill()
+    for attempt = 1, 6 do
+        local knife = getKnife()
+        if not knife then return end
+        local events = knife:FindFirstChild("Events")
+        if not events then return end
+        local ht = events:FindFirstChild("HandleTouched")
+        if not ht then return end
 
-        local targetName = getCurrentTargetName()
-        if targetName == "" then
-            fails = fails + 1
-            if fails > 30 then return "TIMEOUT" end
-            task.wait(0.15)
-        elseif isWhitelisted(targetName) then
-            shared.Notify("Whitelisted target: " .. targetName .. " — stopping.", 3)
-            return "WHITELISTED"
+        local target = nil
+        if survivorPlayer and survivorPlayer.Parent and survivorPlayer.Character then
+            local hum = survivorPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health > 0 then
+                target = survivorPlayer
+            end
+        end
+
+        if not target then
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= player and not isWhitelisted(p) and p.Character then
+                    local hum = p.Character:FindFirstChildOfClass("Humanoid")
+                    if hum and hum.Health > 0 then
+                        target = p
+                        break
+                    end
+                end
+            end
+        end
+
+        if not target then return end
+
+        local char = target.Character
+        local ut = char and char:FindFirstChild("UpperTorso")
+        if not ut then
+            task.wait(0.3)
         else
-            local targetPlayer = Players:FindFirstChild(targetName)
-            local result = killTargetByName(targetName)
-            if result == true then
-                fails = 0
-                if targetPlayer then waitForTargetDeath(targetPlayer, 2) end
-                task.wait(0.1)
-            elseif result == "WHITELISTED" then
-                shared.Notify("Whitelisted target: " .. targetName .. " — stopping.", 3)
-                return "WHITELISTED"
-            else
-                fails = fails + 1
-                if fails > 30 then return "TIMEOUT" end
-                task.wait(0.15)
+            pcall(function() ht:FireServer(ut) end)
+            task.wait(0.5)
+            local hum = target.Character and target.Character:FindFirstChildOfClass("Humanoid")
+            if not hum or hum.Health <= 0 then
+                return
             end
         end
     end
-    return "ROUND_ENDED"
 end
 
--- Legacy assassin sequence (used by reset-all only — unchanged behavior)
 local function executeAssassinSequence()
     local knife = getKnife()
     if not knife then return end
@@ -953,7 +954,6 @@ local function stopAura()
     end
 end
 
--- ============ ROUND MONITOR (knife-based) ============
 task.spawn(function()
     while true do
         task.wait(0.5)
@@ -963,11 +963,13 @@ task.spawn(function()
             roundActive = true
             roundStartKillDone = false
             maxCoinsReached = false
+            survivorPlayer = nil
             shared.Notify("Round started (knife detected).", 2)
         elseif not knifePresent and roundActive then
             roundActive = false
             roundStartKillDone = false
             maxCoinsReached = false
+            survivorPlayer = nil
             if roundStartKillThread then pcall(task.cancel, roundStartKillThread); roundStartKillThread = nil end
             if maxCoinsKillThread then pcall(task.cancel, maxCoinsKillThread); maxCoinsKillThread = nil end
         end
@@ -975,27 +977,14 @@ task.spawn(function()
         if roundActive and not roundStartKillDone and autoKillAllEnabled and not maxCoinsReached then
             roundStartKillDone = true
             roundStartKillThread = task.spawn(function()
-                local timeout = tick() + 10
-                while tick() < timeout and not hasKnife() and roundActive do
-                    task.wait(0.2)
-                end
-                if not roundActive or not hasKnife() then return end
                 task.wait(0.5)
-
-                if assassinModeEnabled then
-                    local result = killAllExceptOneInOrder()
-                    if result == "WHITELISTED" then
-                        shared.Notify("Round-start kill stopped at whitelisted player.", 2)
-                    end
-                else
-                    killAllExceptOne()
-                end
+                if not roundActive or not hasKnife() then return end
+                performRoundStartKill()
             end)
         end
     end
 end)
 
--- ============ MAX COINS HANDLER ============
 task.spawn(function()
     local CoinCollected = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("CoinCollected")
     CoinCollected.OnClientEvent:Connect(function(_, currentCoins, maxCoins)
@@ -1008,25 +997,9 @@ task.spawn(function()
             maxCoinsReached = true
             if maxCoinsKillThread then pcall(task.cancel, maxCoinsKillThread); maxCoinsKillThread = nil end
             maxCoinsKillThread = task.spawn(function()
-                local timeout = tick() + 15
-                while tick() < timeout and not hasKnife() do
-                    task.wait(0.1)
-                end
+                task.wait(0.5)
                 if not hasKnife() then return end
-
-                if assassinModeEnabled then
-                    local result = killAllInOrder()
-                    if result == "WHITELISTED" then
-                        shared.Notify("Max coins: stopped at whitelisted. Waiting for round to end...", 3)
-                        while hasKnife() do task.wait(0.5) end
-                        shared.Notify("Round ended. Ready for next round.", 2)
-                    end
-                else
-                    for i = 1, 3 do
-                        killAll()
-                        if i < 3 then task.wait(2.5) end
-                    end
-                end
+                performMaxBagKill()
             end)
             return
         end
@@ -1139,7 +1112,6 @@ combat_section:AddToggle("Auto-Grab Gun", function(enabled)
     end
 end)
 
--- ============ WHITELIST UI (fixed nil guard + pcall fallbacks) ============
 local function addPlayerToWhitelist(p)
     if p and p.UserId and not table.find(whitelist, p.UserId) then
         table.insert(whitelist, p.UserId)
