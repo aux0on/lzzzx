@@ -136,8 +136,8 @@ RootMaid:GiveTask(autoGGMaid)
 
 local hasFlingedMurdererThisLife = false
 local hasExecutedThisLife = false
-local leftOneThisRound = false          -- set true only after we successfully left 1 alive
-local finalKillDoneThisRound = false    -- prevent double final kills
+local leftOneThisRound = false
+local finalKillDoneThisRound = false
 
 local blackScreenGui = nil
 local blackScreenFrame = nil
@@ -354,7 +354,7 @@ local function getLivingPlayerCount()
     return count
 end
 
--- CORE: leave exactly one other player alive. Never touches the last one.
+-- leave exactly one other player alive
 local function leaveExactlyOne()
     local knife = getKnife()
     if not knife then return false end
@@ -369,21 +369,20 @@ local function leaveExactlyOne()
             local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
             local part = getKillPart(p.Character)
             if humanoid and humanoid.Health > 0 and part then
-                table.insert(living, {player = p, part = part, name = p.Name})
+                table.insert(living, {player = p, part = part})
             end
         end
     end
 
     if #living <= 1 then
-        return #living == 1 -- already only one (or zero)
+        return #living == 1
     end
 
-    -- pick one random survivor and never touch them
     local survivorIndex = math.random(1, #living)
-    local survivor = living[survivorIndex]
+    local survivorPart = living[survivorIndex].part
 
-    for i, entry in ipairs(living) do
-        if entry.part ~= survivor.part then
+    for _, entry in ipairs(living) do
+        if entry.part ~= survivorPart then
             handleTouched:FireServer(entry.part)
             task.wait(0.04)
             handleTouched:FireServer(entry.part)
@@ -391,12 +390,10 @@ local function leaveExactlyOne()
         end
     end
 
-    -- wait for deaths to register, then confirm
-    task.wait(0.6)
+    task.wait(0.65)
     return getLivingPlayerCount() <= 1
 end
 
--- Assassin path also forced to stop at 1
 local function executeAssassinSequence()
     local knife = getKnife()
     if not knife then return end
@@ -404,9 +401,7 @@ local function executeAssassinSequence()
 
     while autoKillAllEnabled and assassinModeEnabled and player.Character do
         local living = getLivingPlayerCount()
-        if living <= 1 then
-            break -- hard stop
-        end
+        if living <= 1 then break end
 
         local targetName = getCurrentTargetName()
         if targetName then
@@ -628,7 +623,7 @@ local function startShootingMurderer()
 end
 
 -------------------------------------------------
--- ROUND START: leave exactly one other player
+-- ROUND START → leave exactly one
 -------------------------------------------------
 task.spawn(function()
     local executedThisRound = false
@@ -641,7 +636,7 @@ task.spawn(function()
                     leftOneThisRound = false
                     finalKillDoneThisRound = false
 
-                    task.wait(1.35) -- let everyone spawn / roles settle
+                    task.wait(1.35)
 
                     if getLivingPlayerCount() > 1 then
                         if assassinModeEnabled then
@@ -651,8 +646,7 @@ task.spawn(function()
                         end
                     end
 
-                    -- confirm we actually left one
-                    task.wait(0.4)
+                    task.wait(0.5)
                     if getLivingPlayerCount() <= 1 then
                         leftOneThisRound = true
                     end
@@ -671,49 +665,49 @@ task.spawn(function()
 end)
 
 -------------------------------------------------
--- MAX COINS ONLY: kill the last remaining person
+-- MAX COINS → force kill the last person
 -------------------------------------------------
 task.spawn(function()
     local CoinCollected = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("CoinCollected")
     CoinCollected.OnClientEvent:Connect(function(_, currentCoins, maxCoins)
         if currentCoins < maxCoins then return end
         if not autoKillAllEnabled then return end
-        if not hasKnife() then return end
         if finalKillDoneThisRound then return end
 
-        -- hard gate: only allowed after we already left one
-        if not leftOneThisRound then return end
+        -- allow final if we left one OR if living is already low
+        local living = getLivingPlayerCount()
+        if not leftOneThisRound and living > 1 then return end
 
         finalKillDoneThisRound = true
 
         task.spawn(function()
-            local timeout = tick() + 12
+            -- wait for knife if needed
+            local timeout = tick() + 10
             while tick() < timeout and not hasKnife() do
                 task.wait(0.1)
             end
             if not hasKnife() then return end
 
+            -- try assassin target first
             if assassinModeEnabled then
                 local targetName = getCurrentTargetName()
                 if targetName then
                     killTargetByName(targetName)
-                    task.wait(0.4)
+                    task.wait(0.35)
                 end
-                -- fallback wipe in case target name is stale
-                if getLivingPlayerCount() > 0 then
-                    killAll()
-                end
-            else
-                for i = 1, 3 do
-                    killAll()
-                    if i < 3 then task.wait(2.0) end
-                end
+            end
+
+            -- always fall back to full wipe of whoever is left
+            for i = 1, 4 do
+                if getLivingPlayerCount() <= 0 then break end
+                killAll()
+                task.wait(1.8)
             end
         end)
     end)
 end)
 
--- rest of the original toggles / systems (unchanged)
+-- UI toggles
 combat_section:AddToggle("Disable 3D Rendering", function(v)
     SetNoRenderState(v)
 end)
@@ -835,4 +829,4 @@ RootMaid:GiveTask(function()
     setNoclip(false)
 end)
 
-shared.Notify("Autofarm+ — leave 1 alive at start, kill last only at max bag", 2)
+shared.Notify("Autofarm+ — leave 1 at start, force final kill at max bag", 2)
