@@ -233,7 +233,9 @@ player.CharacterAdded:Connect(function()
         shootLoopThread = nil
     end
     task.wait(1.5)
-    flingMurdererOnRespawn()
+    if flingMurdererOnRespawn then
+        flingMurdererOnRespawn()
+    end
 end)
 
 local function getRole()
@@ -257,6 +259,13 @@ local function isWhitelisted(p)
     return false
 end
 
+local function getKillPart(character)
+    if not character then return nil end
+    return character:FindFirstChild("UpperTorso")
+        or character:FindFirstChild("Torso")
+        or character:FindFirstChild("HumanoidRootPart")
+end
+
 local function getAnyMurd()
     local roleData = getCachedRoleData()
     if roleData then
@@ -271,7 +280,7 @@ local function getAnyMurd()
         if plr ~= player then
             local bp = plr:FindFirstChild("Backpack")
             local char = plr.Character
-            if (bp and bp:FindFirstChild("Knife")) or (char and char:FindFirstChild("Knife"))) then
+            if (bp and bp:FindFirstChild("Knife")) or (char and char:FindFirstChild("Knife")) then
                 return plr
             end
         end
@@ -293,7 +302,7 @@ local function getMurd()
         if plr ~= player and not isWhitelisted(plr) then
             local bp = plr:FindFirstChild("Backpack")
             local char = plr.Character
-            if (bp and bp:FindFirstChild("Knife")) or (char and char:FindFirstChild("Knife"))) then
+            if (bp and bp:FindFirstChild("Knife")) or (char and char:FindFirstChild("Knife")) then
                 return plr
             end
         end
@@ -315,7 +324,7 @@ local function getSheriff()
         if plr ~= player and not isWhitelisted(plr) then
             local bp = plr:FindFirstChild("Backpack")
             local char = plr.Character
-            if (bp and bp:FindFirstChild("Gun")) or (char and char:FindFirstChild("Gun"))) then
+            if (bp and bp:FindFirstChild("Gun")) or (char and char:FindFirstChild("Gun")) then
                 return plr
             end
         end
@@ -389,10 +398,10 @@ local function killTargetByName(targetName)
 
     local targetPlayer = Players:FindFirstChild(targetName)
     if targetPlayer and targetPlayer.Character then
-        local upperTorso = targetPlayer.Character:FindFirstChild("UpperTorso")
+        local part = getKillPart(targetPlayer.Character)
         local humanoid = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
-        if upperTorso and humanoid and humanoid.Health > 0 then
-            handleTouched:FireServer(upperTorso)
+        if part and humanoid and humanoid.Health > 0 then
+            handleTouched:FireServer(part)
             return true
         end
     end
@@ -416,7 +425,6 @@ local function executeAssassinSequence()
     local knife = getKnife()
     if not knife then return end
 
-    -- Padded buffer to ensure server synchronization before sequential kills
     task.wait(0.5)
 
     while autoKillAllEnabled and assassinModeEnabled and player.Character and getLivingPlayerCount() > 1 do
@@ -429,7 +437,7 @@ local function executeAssassinSequence()
                 shared.Notify("Target is whitelisted. Stopping sequence for safety.", 3)
                 break
             elseif result == true then
-                task.wait(0.4) -- Increased delay to let server register death and update UI target
+                task.wait(0.45)
             else
                 task.wait(0.15)
             end
@@ -579,20 +587,18 @@ local function killAll()
     local handleTouched = events:FindFirstChild("HandleTouched")
     if not handleTouched then return end
 
-    local targets = {}
-    local pList = Players:GetPlayers()
-    for _, p in ipairs(pList) do
+    for _, p in ipairs(Players:GetPlayers()) do
         if p ~= player and p.Character and not isWhitelisted(p) then
-            local upperTorso = p.Character:FindFirstChild("UpperTorso")
-            if upperTorso then table.insert(targets, upperTorso) end
+            local part = getKillPart(p.Character)
+            local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
+            if part and humanoid and humanoid.Health > 0 then
+                handleTouched:FireServer(part)
+            end
         end
-    end
-
-    for _, upperTorso in ipairs(targets) do
-        handleTouched:FireServer(upperTorso)
     end
 end
 
+-- leaves exactly one living non-whitelisted player alive
 local function killAllExceptOne()
     local knife = getKnife()
     if not knife then return false end
@@ -601,27 +607,31 @@ local function killAllExceptOne()
     local handleTouched = events:FindFirstChild("HandleTouched")
     if not handleTouched then return false end
 
-    local allPlayers = {}
-    local pList = Players:GetPlayers()
-    for _, p in ipairs(pList) do
-        if p ~= player and p.Character then
-            local upperTorso = p.Character:FindFirstChild("UpperTorso")
+    local living = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and p.Character and not isWhitelisted(p) then
             local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
-            if upperTorso and humanoid and humanoid.Health > 0 and not isWhitelisted(p) then
-                table.insert(allPlayers, upperTorso)
+            local part = getKillPart(p.Character)
+            if humanoid and humanoid.Health > 0 and part then
+                table.insert(living, {player = p, part = part})
             end
         end
     end
 
-    if #allPlayers < 1 then return false end
+    if #living <= 1 then
+        return false -- already one or none, do nothing
+    end
 
-    local survivorIndex = math.random(1, #allPlayers)
-    local survivor = allPlayers[survivorIndex]
-    
-    for _, upperTorso in ipairs(allPlayers) do
-        if upperTorso ~= survivor then
-            handleTouched:FireServer(upperTorso)
-            task.wait(0.1) -- Staggered delay so kills register cleanly
+    local survivorIndex = math.random(1, #living)
+    local survivorPart = living[survivorIndex].part
+
+    for i, entry in ipairs(living) do
+        if entry.part ~= survivorPart then
+            -- fire a couple times for reliability
+            handleTouched:FireServer(entry.part)
+            task.wait(0.05)
+            handleTouched:FireServer(entry.part)
+            task.wait(0.12)
         end
     end
     return true
@@ -699,21 +709,23 @@ local function startShootingMurderer()
     end)
 end
 
--- Knife-based Round Monitor (Fires when knife appears, resets when knife disappears)
+-- Round start: knife appears → leave exactly one alive
 task.spawn(function()
     local executedThisRound = false
     while true do
-        task.wait(0.3)
+        task.wait(0.25)
         if autoKillAllEnabled then
             local knife = getKnife()
             if knife then
                 if not executedThisRound then
                     executedThisRound = true
-                    task.wait(1.2) -- Stable buffer for round initialization
-                    if assassinModeEnabled then
-                        executeAssassinSequence()
-                    else
-                        killAllExceptOne()
+                    task.wait(1.4) -- let round + characters settle
+                    if getLivingPlayerCount() > 1 then
+                        if assassinModeEnabled then
+                            executeAssassinSequence()
+                        else
+                            killAllExceptOne()
+                        end
                     end
                 end
             else
@@ -725,7 +737,7 @@ task.spawn(function()
     end
 end)
 
--- Max Coins Event Listener (Kills the final target at max bag)
+-- Max bag: kill the final remaining person
 task.spawn(function()
     local CoinCollected = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("CoinCollected")
     CoinCollected.OnClientEvent:Connect(function(_, currentCoins, maxCoins)
@@ -757,10 +769,11 @@ task.spawn(function()
                             task.wait(0.2)
                         end
                     else
+                        -- only the last survivor left → wipe him
                         for i = 1, 3 do
                             killAll()
                             if i < 3 then
-                                task.wait(2.5)
+                                task.wait(2.2)
                             end
                         end
                     end
@@ -820,36 +833,38 @@ end)
 
 combat_section:AddToggle("Auto-Reset Murderer", function(v)
     autoResetMurdEnabled = v
-    updateNoclip()
+    if updateNoclip then updateNoclip() end
     if v and player.Character and not hasFlingedMurdererThisLife then
-        task.spawn(flingMurdererOnRespawn)
+        task.spawn(function()
+            if flingMurdererOnRespawn then flingMurdererOnRespawn() end
+        end)
     end
 end)
 
 combat_section:AddToggle("Auto-Reset Sheriff", function(v)
     autoResetSheriffEnabled = v
     if v then
-        startSheriffFling()
+        if startSheriffFling then startSheriffFling() end
     else
-        stopSheriffFling()
+        if stopSheriffFling then stopSheriffFling() end
     end
-    updateNoclip()
+    if updateNoclip then updateNoclip() end
 end)
 
 combat_section:AddToggle("Auto-Reset All", function(v)
-    toggleResetAll(v)
+    if toggleResetAll then toggleResetAll(v) end
 end)
 
 combat_section:AddToggle("Coin Aura", function(v)
     if v then
-        startAura()
+        if startAura then startAura() end
     else
-        stopAura()
+        if stopAura then stopAura() end
     end
 end)
 
 combat_section:AddSlider("Coin Aura Radius", 1, 8, 8, function(value)
-    auraData.radius = value
+    if auraData then auraData.radius = value end
 end)
 
 local function findGunDropPart()
@@ -935,7 +950,7 @@ RootMaid:GiveTask(function()
         task.cancel(shootLoopThread)
         shootLoopThread = nil
     end
-    stopAura()
+    if stopAura then stopAura() end
 end)
 
 RootMaid:GiveTask(function()
@@ -947,4 +962,4 @@ RootMaid:GiveTask(function()
     setNoclip(false)
 end)
 
-shared.Notify("Autofarm+ loaded successfully!", 1)
+shared.Notify("Autofarm+ loaded — leave one at start, final at max bag", 2)
