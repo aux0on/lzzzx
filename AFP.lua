@@ -172,6 +172,9 @@ local resetAllState = "waiting"
 local hasFlingedMurdererThisLife = false
 local hasExecutedThisLife = false
 
+-- tracks whether we already left one alive this round
+local leftOneThisRound = false
+
 local blackScreenGui = nil
 local blackScreenFrame = nil
 
@@ -421,28 +424,37 @@ local function getLivingPlayerCount()
     return count
 end
 
+-- hardened: never kills the last player
 local function executeAssassinSequence()
     local knife = getKnife()
     if not knife then return end
 
-    task.wait(0.5)
+    task.wait(0.55)
 
-    while autoKillAllEnabled and assassinModeEnabled and player.Character and getLivingPlayerCount() > 1 do
+    while autoKillAllEnabled and assassinModeEnabled and player.Character do
+        local living = getLivingPlayerCount()
+        if living <= 1 then
+            break -- hard stop, leave the last one
+        end
+
         local targetName = getCurrentTargetName()
         
         if targetName ~= "" and targetName ~= "Nikilis" then
             local result = killTargetByName(targetName)
             
             if result == "WHITELISTED" then
-                shared.Notify("Target is whitelisted. Stopping sequence for safety.", 3)
+                shared.Notify("Target is whitelisted. Stopping sequence.", 3)
                 break
             elseif result == true then
-                task.wait(0.45)
+                task.wait(0.55) -- let death register
+                if getLivingPlayerCount() <= 1 then
+                    break
+                end
             else
-                task.wait(0.15)
+                task.wait(0.12)
             end
         else
-            task.wait(0.15)
+            task.wait(0.12)
         end
     end
 end
@@ -619,7 +631,7 @@ local function killAllExceptOne()
     end
 
     if #living <= 1 then
-        return false -- already one or none, do nothing
+        return false
     end
 
     local survivorIndex = math.random(1, #living)
@@ -627,7 +639,6 @@ local function killAllExceptOne()
 
     for i, entry in ipairs(living) do
         if entry.part ~= survivorPart then
-            -- fire a couple times for reliability
             handleTouched:FireServer(entry.part)
             task.wait(0.05)
             handleTouched:FireServer(entry.part)
@@ -719,25 +730,32 @@ task.spawn(function()
             if knife then
                 if not executedThisRound then
                     executedThisRound = true
-                    task.wait(1.4) -- let round + characters settle
+                    leftOneThisRound = false
+                    task.wait(1.4)
                     if getLivingPlayerCount() > 1 then
                         if assassinModeEnabled then
                             executeAssassinSequence()
                         else
                             killAllExceptOne()
                         end
+                        -- mark that we already left one
+                        if getLivingPlayerCount() <= 1 then
+                            leftOneThisRound = true
+                        end
                     end
                 end
             else
                 executedThisRound = false
+                leftOneThisRound = false
             end
         else
             executedThisRound = false
+            leftOneThisRound = false
         end
     end
 end)
 
--- Max bag: kill the final remaining person
+-- Max bag ONLY: kill the final remaining person
 task.spawn(function()
     local CoinCollected = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("CoinCollected")
     CoinCollected.OnClientEvent:Connect(function(_, currentCoins, maxCoins)
@@ -746,6 +764,11 @@ task.spawn(function()
         local role = getMyRole() or getRole()
 
         if (role == "Murderer" or hasKnife()) and autoKillAllEnabled then
+            -- only allow final wipe after we already left one, or if somehow only 1-2 left
+            if not leftOneThisRound and getLivingPlayerCount() > 2 then
+                return
+            end
+
             task.spawn(function()
                 local timeout = tick() + 15
                 while tick() < timeout and not hasKnife() do
@@ -755,6 +778,7 @@ task.spawn(function()
                     if assassinModeEnabled then
                         local assassinTimeout = tick() + 6
                         while tick() < assassinTimeout and hasKnife() do
+                            if getLivingPlayerCount() <= 0 then break end
                             local targetName = getCurrentTargetName()
                             if targetName ~= "" and targetName ~= "Nikilis" then
                                 local res = killTargetByName(targetName)
@@ -762,14 +786,13 @@ task.spawn(function()
                                     shared.Notify("Final target is whitelisted. Leaving them alive.", 3)
                                     break
                                 elseif res == true then
-                                    task.wait(0.3)
+                                    task.wait(0.35)
                                     break
                                 end
                             end
                             task.wait(0.2)
                         end
                     else
-                        -- only the last survivor left → wipe him
                         for i = 1, 3 do
                             killAll()
                             if i < 3 then
@@ -962,4 +985,4 @@ RootMaid:GiveTask(function()
     setNoclip(false)
 end)
 
-shared.Notify("Autofarm+ loaded — leave one at start, final at max bag", 2)
+shared.Notify("Autofarm+ loaded — leave one at start, final only at max bag", 2)
