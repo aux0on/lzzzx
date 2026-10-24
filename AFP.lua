@@ -151,6 +151,7 @@ local function getMyRole()
 end
 
 local autoKillAllEnabled = false
+local assassinModeEnabled = false
 local autoShootMurdEnabled = false
 local autoResetMurdEnabled = false
 local autoResetSheriffEnabled = false
@@ -247,7 +248,13 @@ local function getRole()
 end
 
 local function isWhitelisted(p)
-    return table.find(whitelist, p.UserId) ~= nil
+    if typeof(p) == "Instance" and p:IsA("Player") then
+        return table.find(whitelist, p.UserId) ~= nil
+    elseif type(p) == "string" then
+        local plr = Players:FindFirstChild(p)
+        return plr and table.find(whitelist, plr.UserId) ~= nil
+    end
+    return false
 end
 
 local function getAnyMurd()
@@ -345,6 +352,81 @@ end
 
 local function hasKnife()
     return getKnife() ~= nil
+end
+
+local function getCurrentTargetName()
+    local pGui = player:FindFirstChild("PlayerGui")
+    if not pGui then return "" end
+    local mainGui = pGui:FindFirstChild("MainGUI")
+    if not mainGui then return "" end
+    local gameFrame = mainGui:FindFirstChild("Game")
+    if not gameFrame then return "" end
+    local assassinTarget = gameFrame:FindFirstChild("AssassinTarget")
+    if not assassinTarget then return "" end
+    local targetNameObj = assassinTarget:FindFirstChild("TargetName")
+    if targetNameObj and (targetNameObj:IsA("TextLabel") or targetNameObj:IsA("TextBox")) then
+        return targetNameObj.Text or ""
+    end
+    return ""
+end
+
+local function killTargetByName(targetName)
+    if targetName == "" then return false end
+    local knife = getKnife()
+    if not knife then return false end
+    local events = knife:FindFirstChild("Events")
+    if not events then return false end
+    local handleTouched = events:FindFirstChild("HandleTouched")
+    if not handleTouched then return false end
+
+    local targetPlayer = Players:FindFirstChild(targetName)
+    if targetPlayer and targetPlayer.Character then
+        local upperTorso = targetPlayer.Character:FindFirstChild("UpperTorso")
+        local humanoid = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if upperTorso and humanoid and humanoid.Health > 0 then
+            handleTouched:FireServer(upperTorso)
+            return true
+        end
+    end
+    return false
+end
+
+local function getLivingPlayerCount()
+    local count = 0
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and p.Character then
+            local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid and humanoid.Health > 0 and not isWhitelisted(p) then
+                count = count + 1
+            end
+        end
+    end
+    return count
+end
+
+local function executeAssassinSequence()
+    local knife = getKnife()
+    if not knife then return end
+
+    while autoKillAllEnabled and player.Character and getLivingPlayerCount() > 1 do
+        local targetName = getCurrentTargetName()
+        
+        if targetName ~= "" then
+            local targetPlayer = Players:FindFirstChild(targetName)
+            
+            if targetPlayer and isWhitelisted(targetPlayer) then
+                task.wait(0.2)
+            else
+                if killTargetByName(targetName) then
+                    task.wait(0.25)
+                else
+                    task.wait(0.1)
+                end
+            end
+        else
+            task.wait(0.1)
+        end
+    end
 end
 
 local function touch(a, b)
@@ -612,7 +694,11 @@ local function executeResetAll()
         if not hasExecutedThisLife then
             hasExecutedThisLife = true
             task.wait(1.0)
-            killAllExceptOne()
+            if assassinModeEnabled then
+                executeAssassinSequence()
+            else
+                killAllExceptOne()
+            end
         end
     else
         local murderer = getAnyMurd()
@@ -822,7 +908,7 @@ task.spawn(function()
 
         local role = getMyRole() or getRole()
 
-        -- Normal killAll runs when max coins are collected
+        -- Max coins event behavior
         if (role == "Murderer" or hasKnife()) and autoKillAllEnabled then
             task.spawn(function()
                 local timeout = tick() + 15
@@ -830,10 +916,25 @@ task.spawn(function()
                     task.wait(0.1)
                 end
                 if hasKnife() then
-                    for i = 1, 3 do
-                        killAll()
-                        if i < 3 then
-                            task.wait(2.5)
+                    if assassinModeEnabled then
+                        -- Kill the last remaining target in Assassin mode
+                        local assassinTimeout = tick() + 5
+                        while tick() < assassinTimeout and hasKnife() do
+                            local targetName = getCurrentTargetName()
+                            if targetName ~= "" then
+                                killTargetByName(targetName)
+                                task.wait(0.2)
+                            else
+                                task.wait(0.1)
+                            end
+                        end
+                    else
+                        -- Standard mode: run full killAll 3 times
+                        for i = 1, 3 do
+                            killAll()
+                            if i < 3 then
+                                task.wait(2.5)
+                            end
                         end
                     end
                 end
@@ -883,17 +984,24 @@ combat_section:AddToggle("Auto-Kill All", function(v)
     if v then
         task.spawn(function()
             while autoKillAllEnabled do
-                -- Kill All Except One runs at round start when knife appears
                 if not hasExecutedThisLife and hasKnife() then
                     hasExecutedThisLife = true
                     task.wait(1.0)
-                    killAllExceptOne()
+                    if assassinModeEnabled then
+                        executeAssassinSequence()
+                    else
+                        killAllExceptOne()
+                    end
                     break
                 end
                 task.wait(0.1)
             end
         end)
     end
+end)
+
+combat_section:AddToggle("Assassin Mode", function(v)
+    assassinModeEnabled = v
 end)
 
 combat_section:AddToggle("Auto-Shoot Murd", function(v)
