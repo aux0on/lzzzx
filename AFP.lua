@@ -376,7 +376,6 @@ end
 local function killTargetByName(targetName)
     if targetName == "" or targetName == "Nikilis" then return false end
     
-    -- Whitelist check: If the target is whitelisted, do NOT kill them
     if isWhitelisted(targetName) then
         return "WHITELISTED"
     end
@@ -414,10 +413,14 @@ local function getLivingPlayerCount()
 end
 
 local function executeAssassinSequence()
-    local knife = getKnife()
-    if not knife then return end
+    -- Wait until the knife is actually in our inventory before attempting kills
+    local timeout = tick() + 10
+    while not hasKnife() and tick() < timeout and autoKillAllEnabled do
+        task.wait(0.2)
+    end
 
-    -- Keep assassinating until strictly 1 target is left alive
+    if not hasKnife() then return end
+
     while autoKillAllEnabled and assassinModeEnabled and player.Character and getLivingPlayerCount() > 1 do
         local targetName = getCurrentTargetName()
         
@@ -425,17 +428,15 @@ local function executeAssassinSequence()
             local result = killTargetByName(targetName)
             
             if result == "WHITELISTED" then
-                -- Whitelisted user targeted: Stop killing immediately to protect them
                 shared.Notify("Target is whitelisted. Stopping sequence for this round.", 3)
                 break
             elseif result == true then
-                task.wait(0.25) -- Brief delay for target UI to cycle to next player
+                task.wait(0.25)
             else
                 task.wait(0.1)
             end
         else
-            -- Round ended or target not available
-            break
+            task.wait(0.1)
         end
     end
 end
@@ -604,9 +605,9 @@ local function killAllExceptOne()
     local allPlayers = {}
     local pList = Players:GetPlayers()
     for _, p in ipairs(pList) do
-        if p ~= player and p.Character and not isWhitelisted(p) then
+        if p ~= player and p.Character then
             local upperTorso = p.Character:FindFirstChild("UpperTorso")
-            if upperTorso then
+            if upperTorso and not isWhitelisted(p) then
                 table.insert(allPlayers, upperTorso)
             end
         end
@@ -698,235 +699,27 @@ local function startShootingMurderer()
     end)
 end
 
-local function executeResetAll()
-    local role = getMyRole() or getRole()
-
-    if role == "Murderer" or hasKnife() then
-        if not hasExecutedThisLife then
-            hasExecutedThisLife = true
-            task.wait(1.0)
-            if assassinModeEnabled then
-                executeAssassinSequence()
-            else
-                killAllExceptOne()
-            end
-        end
-    else
-        local murderer = getAnyMurd()
-        local pList = Players:GetPlayers()
-        for _, p in ipairs(pList) do
-            if p ~= player and p ~= murderer and not isWhitelisted(p) then
-                local tChar = p.Character
-                local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
-                if tHum and tHum.Health > 0 then
-                    resetPlayer(p, 1)
-                    task.wait(0.2)
-                end
-            end
-        end
-    end
-end
-
-local function startResetAllMonitor()
-    if resetAllMaid then resetAllMaid:Destroy() end
-    resetAllMaid = Maid.new()
-    resetAllState = "waiting"
-
-    local thread = task.spawn(function()
-        while resetAllEnabled do
-            setNoclip(true)
-            roleCache.data = nil
-            roleCache.timestamp = 0
-            local role = getMyRole() or getRole()
-
-            if resetAllState == "waiting" then
-                local shouldRun = false
-
-                if role == "Murderer" or hasKnife() then
-                    if not hasExecutedThisLife then
-                        shouldRun = true
-                    end
-                else
-                    if getAnyMurd() then
-                        shouldRun = true
-                    end
-                end
-
-                if shouldRun then
-                    executeResetAll()
-                    resetAllState = "done"
-                end
-            elseif resetAllState == "done" then
-                if role == "Murderer" or hasKnife() then
-                    if not hasKnife() then
-                        resetAllState = "waiting"
-                    end
-                else
-                    if not getAnyMurd() then
-                        resetAllState = "waiting"
-                    end
-                end
-            end
-
-            task.wait(0.1)
-        end
-    end)
-    resetAllMaid:GiveTask(function() task.cancel(thread) end)
-end
-
-local function stopResetAllMonitor()
-    if resetAllMaid then
-        resetAllMaid:Destroy()
-        resetAllMaid = nil
-    end
-    resetAllState = "waiting"
-end
-
-local function updateNoclip()
-    setNoclip(autoResetSheriffEnabled or autoResetMurdEnabled or resetAllEnabled)
-end
-
-local function toggleResetAll(enabled)
-    resetAllEnabled = enabled
-    if enabled then
-        startResetAllMonitor()
-    else
-        stopResetAllMonitor()
-    end
-    updateNoclip()
-end
-
-local function startSheriffFling()
-    if sheriffFlingMaid then sheriffFlingMaid:Destroy() end
-    sheriffFlingMaid = Maid.new()
-    local thread = task.spawn(function()
-        while autoResetSheriffEnabled do
-            setNoclip(true)
-            local role = getMyRole() or getRole()
-            if role ~= "Murderer" then
-                local target = getSheriff()
-                if target and target ~= player then
-                    resetPlayer(target, 3)
-                    while getSheriff() and autoResetSheriffEnabled and ((getMyRole() or getRole()) ~= "Murderer") do
-                        task.wait(0.5)
-                    end
-                end
-            end
-            task.wait(0.3)
-        end
-        if sheriffFlingMaid then
-            sheriffFlingMaid:Destroy()
-            sheriffFlingMaid = nil
-        end
-        updateNoclip()
-    end)
-    sheriffFlingMaid:GiveTask(function() task.cancel(thread) end)
-end
-
-local function stopSheriffFling()
-    if sheriffFlingMaid then
-        sheriffFlingMaid:Destroy()
-        sheriffFlingMaid = nil
-    end
-    updateNoclip()
-end
-
-local function flingMurdererOnRespawn()
-    if not autoResetMurdEnabled then return end
-    if hasFlingedMurdererThisLife then return end
-
-    local role = getMyRole() or getRole()
-    if role == "Murderer" then return end
-
-    if autoShootMurdEnabled and hasGun() then
-        return
-    end
-
-    local murd = getMurd()
-    if murd then
-        task.wait(0.5)
-        resetPlayer(murd, 3)
-        hasFlingedMurdererThisLife = true
-    end
-end
-
-local auraData = {
-    enabled = false,
-    thread = nil,
-    radius = 8,
-}
-
-local function getCoinContainers()
-    local containers = {}
-    local children = Workspace:GetChildren()
-    for _, map in ipairs(children) do
-        local container = map:FindFirstChild("CoinContainer")
-        if container then
-            table.insert(containers, container)
-        end
-    end
-    return containers
-end
-
-local function getCoinParts(containers)
-    local parts = {}
-    for _, container in ipairs(containers) do
-        local descendants = container:GetDescendants()
-        for _, descendant in ipairs(descendants) do
-            if descendant:IsA("BasePart") and descendant:FindFirstChild("TouchInterest") then
-                table.insert(parts, descendant)
-            end
-        end
-    end
-    return parts
-end
-
-local function collectNearbyCoins()
-    local character = player.Character
-    if not character then return end
-    
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
-    if not rootPart then return end
-    
-    local rootPos = rootPart.Position
-    local containers = getCoinContainers()
-    local coinParts = getCoinParts(containers)
-    
-    for _, part in ipairs(coinParts) do
-        if (rootPos - part.Position).Magnitude <= auraData.radius then
-            touch(rootPart, part)
-        end
-    end
-end
-
-local function startAura()
-    auraData.enabled = true
-    auraData.thread = RunService.Heartbeat:Connect(collectNearbyCoins)
-end
-
-local function stopAura()
-    auraData.enabled = false
-    if auraData.thread then
-        auraData.thread:Disconnect()
-        auraData.thread = nil
-    end
-end
-
--- Detection: TargetName changes from Nikilis to an actual target player
+-- Detection: TargetName changes from Nikilis to a player (Round Start trigger)
 task.spawn(function()
     local roundStarted = false
     while true do
         task.wait(0.25)
         local targetName = getCurrentTargetName()
         
-        if targetName ~= "Nikilis" and targetName ~= "" and hasKnife() then
+        if targetName ~= "Nikilis" and targetName ~= "" then
             if not roundStarted and autoKillAllEnabled then
                 roundStarted = true
-                task.wait(0.5) -- Wait for target name to settle
                 if assassinModeEnabled then
                     executeAssassinSequence()
                 else
-                    killAllExceptOne()
+                    -- Wait for knife for standard mode too
+                    local timeout = tick() + 10
+                    while not hasKnife() and tick() < timeout and autoKillAllEnabled do
+                        task.wait(0.2)
+                    end
+                    if hasKnife() then
+                        killAllExceptOne()
+                    end
                 end
             end
         else
@@ -935,7 +728,7 @@ task.spawn(function()
     end
 end)
 
--- Max Coins Event Listener (Kills the final survivor or standard killAll)
+-- Max Coins Event Listener (Kills the final target at max bag)
 task.spawn(function()
     local CoinCollected = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("CoinCollected")
     CoinCollected.OnClientEvent:Connect(function(_, currentCoins, maxCoins)
