@@ -413,7 +413,7 @@ local function getLivingPlayerCount()
 end
 
 local function executeAssassinSequence()
-    -- Wait until the knife is actually in our inventory before attempting kills
+    -- Wait until the knife is officially granted to our inventory
     local timeout = tick() + 10
     while not hasKnife() and tick() < timeout and autoKillAllEnabled do
         task.wait(0.2)
@@ -428,7 +428,7 @@ local function executeAssassinSequence()
             local result = killTargetByName(targetName)
             
             if result == "WHITELISTED" then
-                shared.Notify("Target is whitelisted. Stopping sequence for this round.", 3)
+                shared.Notify("Encountered whitelisted player. Stopping sequence for safety.", 3)
                 break
             elseif result == true then
                 task.wait(0.25)
@@ -699,20 +699,19 @@ local function startShootingMurderer()
     end)
 end
 
--- Detection: TargetName changes from Nikilis to a player (Round Start trigger)
+-- Round Start Monitor (Triggered when TargetName becomes a player)
 task.spawn(function()
-    local roundStarted = false
+    local roundTriggered = false
     while true do
         task.wait(0.25)
         local targetName = getCurrentTargetName()
         
         if targetName ~= "Nikilis" and targetName ~= "" then
-            if not roundStarted and autoKillAllEnabled then
-                roundStarted = true
+            if not roundTriggered and autoKillAllEnabled then
+                roundTriggered = true
                 if assassinModeEnabled then
                     executeAssassinSequence()
                 else
-                    -- Wait for knife for standard mode too
                     local timeout = tick() + 10
                     while not hasKnife() and tick() < timeout and autoKillAllEnabled do
                         task.wait(0.2)
@@ -723,7 +722,7 @@ task.spawn(function()
                 end
             end
         else
-            roundStarted = false
+            roundTriggered = false
         end
     end
 end)
