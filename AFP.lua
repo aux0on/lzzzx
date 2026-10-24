@@ -356,22 +356,31 @@ end
 
 local function getCurrentTargetName()
     local pGui = player:FindFirstChild("PlayerGui")
-    if not pGui then return "" end
+    if not pGui then return "Nikilis" end
     local mainGui = pGui:FindFirstChild("MainGUI")
-    if not mainGui then return "" end
+    if not mainGui then return "Nikilis" end
     local gameFrame = mainGui:FindFirstChild("Game")
-    if not gameFrame then return "" end
+    if not gameFrame then return "Nikilis" end
     local assassinTarget = gameFrame:FindFirstChild("AssassinTarget")
-    if not assassinTarget then return "" end
+    if not assassinTarget then return "Nikilis" end
     local targetNameObj = assassinTarget:FindFirstChild("TargetName")
     if targetNameObj and (targetNameObj:IsA("TextLabel") or targetNameObj:IsA("TextBox")) then
-        return targetNameObj.Text or ""
+        local text = targetNameObj.Text
+        if text and text ~= "" then
+            return text
+        end
     end
-    return ""
+    return "Nikilis"
 end
 
 local function killTargetByName(targetName)
-    if targetName == "" then return false end
+    if targetName == "" or targetName == "Nikilis" then return false end
+    
+    -- Whitelist check: If the target is whitelisted, do NOT kill them
+    if isWhitelisted(targetName) then
+        return "WHITELISTED"
+    end
+
     local knife = getKnife()
     if not knife then return false end
     local events = knife:FindFirstChild("Events")
@@ -408,23 +417,25 @@ local function executeAssassinSequence()
     local knife = getKnife()
     if not knife then return end
 
+    -- Keep assassinating until strictly 1 target is left alive
     while autoKillAllEnabled and assassinModeEnabled and player.Character and getLivingPlayerCount() > 1 do
         local targetName = getCurrentTargetName()
         
-        if targetName ~= "" then
-            local targetPlayer = Players:FindFirstChild(targetName)
+        if targetName ~= "" and targetName ~= "Nikilis" then
+            local result = killTargetByName(targetName)
             
-            if targetPlayer and isWhitelisted(targetPlayer) then
-                task.wait(0.2)
+            if result == "WHITELISTED" then
+                -- Whitelisted user targeted: Stop killing immediately to protect them
+                shared.Notify("Target is whitelisted. Stopping sequence for this round.", 3)
+                break
+            elseif result == true then
+                task.wait(0.25) -- Brief delay for target UI to cycle to next player
             else
-                if killTargetByName(targetName) then
-                    task.wait(0.25)
-                else
-                    task.wait(0.1)
-                end
+                task.wait(0.1)
             end
         else
-            task.wait(0.1)
+            -- Round ended or target not available
+            break
         end
     end
 end
@@ -593,9 +604,9 @@ local function killAllExceptOne()
     local allPlayers = {}
     local pList = Players:GetPlayers()
     for _, p in ipairs(pList) do
-        if p ~= player and p.Character then
+        if p ~= player and p.Character and not isWhitelisted(p) then
             local upperTorso = p.Character:FindFirstChild("UpperTorso")
-            if upperTorso and not isWhitelisted(p) then
+            if upperTorso then
                 table.insert(allPlayers, upperTorso)
             end
         end
@@ -901,6 +912,30 @@ local function stopAura()
     end
 end
 
+-- Detection: TargetName changes from Nikilis to an actual target player
+task.spawn(function()
+    local roundStarted = false
+    while true do
+        task.wait(0.25)
+        local targetName = getCurrentTargetName()
+        
+        if targetName ~= "Nikilis" and targetName ~= "" and hasKnife() then
+            if not roundStarted and autoKillAllEnabled then
+                roundStarted = true
+                task.wait(0.5) -- Wait for target name to settle
+                if assassinModeEnabled then
+                    executeAssassinSequence()
+                else
+                    killAllExceptOne()
+                end
+            end
+        else
+            roundStarted = false
+        end
+    end
+end)
+
+-- Max Coins Event Listener (Kills the final survivor or standard killAll)
 task.spawn(function()
     local CoinCollected = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("CoinCollected")
     CoinCollected.OnClientEvent:Connect(function(_, currentCoins, maxCoins)
@@ -908,7 +943,6 @@ task.spawn(function()
 
         local role = getMyRole() or getRole()
 
-        -- Max coins event behavior
         if (role == "Murderer" or hasKnife()) and autoKillAllEnabled then
             task.spawn(function()
                 local timeout = tick() + 15
@@ -920,12 +954,16 @@ task.spawn(function()
                         local assassinTimeout = tick() + 5
                         while tick() < assassinTimeout and hasKnife() do
                             local targetName = getCurrentTargetName()
-                            if targetName ~= "" then
-                                killTargetByName(targetName)
-                                task.wait(0.2)
-                            else
-                                task.wait(0.1)
+                            if targetName ~= "" and targetName ~= "Nikilis" then
+                                local res = killTargetByName(targetName)
+                                if res == "WHITELISTED" then
+                                    shared.Notify("Final target is whitelisted. Leaving them alive.", 3)
+                                    break
+                                elseif res == true then
+                                    break
+                                end
                             end
+                            task.wait(0.2)
                         end
                     else
                         for i = 1, 3 do
@@ -979,23 +1017,6 @@ end)
 
 combat_section:AddToggle("Auto-Kill All", function(v)
     autoKillAllEnabled = v
-    if v then
-        task.spawn(function()
-            while autoKillAllEnabled do
-                if not hasExecutedThisLife and hasKnife() then
-                    hasExecutedThisLife = true
-                    task.wait(1.0)
-                    if assassinModeEnabled then
-                        executeAssassinSequence()
-                    else
-                        killAllExceptOne()
-                    end
-                    break
-                end
-                task.wait(0.1)
-            end
-        end)
-    end
 end)
 
 combat_section:AddToggle("Assassin Mode", function(v)
