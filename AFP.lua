@@ -165,12 +165,13 @@ local blackScreenGui = nil
 local blackScreenFrame = nil
 local shootLoopThread = nil
 
-local roundActive         = false
-local roundStartKillDone  = false
-local maxCoinsReached     = false
-local roundStartKillThread = nil
-local maxCoinsKillThread   = nil
-local survivorPlayer      = nil
+local roundActive            = false
+local roundStartKillComplete = false
+local roundStartLock         = false
+local maxCoinsKillComplete   = false
+local survivorPlayer         = nil
+local roundStartKillThread   = nil
+local maxCoinsKillThread     = nil
 
 local function CreateBlackScreen()
     if blackScreenGui then return end
@@ -409,13 +410,17 @@ local function performRoundStartKill()
     local handleTouched = events:FindFirstChild("HandleTouched")
     if not handleTouched then return end
 
-    local loadDeadline = tick() + 1
+    local loadDeadline = tick() + 1.5
     while tick() < loadDeadline do
         local allLoaded = true
         for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= player and not p.Character then
-                allLoaded = false
-                break
+            if p ~= player then
+                local char = p.Character
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                if not hum then
+                    allLoaded = false
+                    break
+                end
             end
         end
         if allLoaded then break end
@@ -444,24 +449,8 @@ local function performRoundStartKill()
 
     survivorPlayer = candidates[math.random(1, #candidates)]
 
-    local fired = {}
-    if assassinModeEnabled then
-        local firstTargetName = getCurrentTargetName()
-        if firstTargetName ~= "" then
-            local firstP = Players:FindFirstChild(firstTargetName)
-            if firstP and firstP ~= survivorPlayer and not isWhitelisted(firstP) then
-                local ut = firstP.Character and firstP.Character:FindFirstChild("UpperTorso")
-                local hum = firstP.Character and firstP.Character:FindFirstChildOfClass("Humanoid")
-                if ut and hum and hum.Health > 0 then
-                    pcall(function() handleTouched:FireServer(ut) end)
-                    fired[firstP] = true
-                end
-            end
-        end
-    end
-
     for _, p in ipairs(candidates) do
-        if p ~= survivorPlayer and not fired[p] then
+        if p ~= survivorPlayer then
             local char = p.Character
             if char then
                 local ut = char:FindFirstChild("UpperTorso")
@@ -476,7 +465,37 @@ local function performRoundStartKill()
 end
 
 local function performMaxBagKill()
-    for attempt = 1, 6 do
+    local target = nil
+
+    if survivorPlayer and survivorPlayer.Parent and survivorPlayer.Character then
+        local hum = survivorPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum and hum.Health > 0 then
+            target = survivorPlayer
+        end
+    end
+
+    if not target then
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= player and not isWhitelisted(p) and p.Character then
+                local hum = p.Character:FindFirstChildOfClass("Humanoid")
+                if hum and hum.Health > 0 then
+                    target = p
+                    break
+                end
+            end
+        end
+    end
+
+    if not target then return end
+
+    for i = 1, 6 do
+        if not hasKnife() then return end
+
+        local char = target.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health <= 0 then return end
+
         local knife = getKnife()
         if not knife then return end
         local events = knife:FindFirstChild("Events")
@@ -484,40 +503,11 @@ local function performMaxBagKill()
         local ht = events:FindFirstChild("HandleTouched")
         if not ht then return end
 
-        local target = nil
-        if survivorPlayer and survivorPlayer.Parent and survivorPlayer.Character then
-            local hum = survivorPlayer.Character:FindFirstChildOfClass("Humanoid")
-            if hum and hum.Health > 0 then
-                target = survivorPlayer
-            end
-        end
-
-        if not target then
-            for _, p in ipairs(Players:GetPlayers()) do
-                if p ~= player and not isWhitelisted(p) and p.Character then
-                    local hum = p.Character:FindFirstChildOfClass("Humanoid")
-                    if hum and hum.Health > 0 then
-                        target = p
-                        break
-                    end
-                end
-            end
-        end
-
-        if not target then return end
-
-        local char = target.Character
-        local ut = char and char:FindFirstChild("UpperTorso")
-        if not ut then
-            task.wait(0.3)
-        else
+        local ut = char:FindFirstChild("UpperTorso")
+        if ut then
             pcall(function() ht:FireServer(ut) end)
-            task.wait(0.5)
-            local hum = target.Character and target.Character:FindFirstChildOfClass("Humanoid")
-            if not hum or hum.Health <= 0 then
-                return
-            end
         end
+        task.wait(1.0)
     end
 end
 
@@ -956,30 +946,35 @@ end
 
 task.spawn(function()
     while true do
-        task.wait(0.5)
+        task.wait(0.3)
         local knifePresent = hasKnife()
 
         if knifePresent and not roundActive then
             roundActive = true
-            roundStartKillDone = false
-            maxCoinsReached = false
+            roundStartKillComplete = false
+            roundStartLock = false
+            maxCoinsKillComplete = false
             survivorPlayer = nil
             shared.Notify("Round started (knife detected).", 2)
         elseif not knifePresent and roundActive then
             roundActive = false
-            roundStartKillDone = false
-            maxCoinsReached = false
+            roundStartKillComplete = false
+            roundStartLock = false
+            maxCoinsKillComplete = false
             survivorPlayer = nil
             if roundStartKillThread then pcall(task.cancel, roundStartKillThread); roundStartKillThread = nil end
             if maxCoinsKillThread then pcall(task.cancel, maxCoinsKillThread); maxCoinsKillThread = nil end
         end
 
-        if roundActive and not roundStartKillDone and autoKillAllEnabled and not maxCoinsReached then
-            roundStartKillDone = true
+        if roundActive and autoKillAllEnabled and not roundStartKillComplete and not roundStartLock and not maxCoinsKillComplete then
+            roundStartLock = true
             roundStartKillThread = task.spawn(function()
-                task.wait(0.5)
-                if not roundActive or not hasKnife() then return end
-                performRoundStartKill()
+                task.wait(0.3)
+                if roundActive and hasKnife() then
+                    pcall(performRoundStartKill)
+                end
+                roundStartKillComplete = true
+                roundStartLock = false
             end)
         end
     end
@@ -989,17 +984,27 @@ task.spawn(function()
     local CoinCollected = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("CoinCollected")
     CoinCollected.OnClientEvent:Connect(function(_, currentCoins, maxCoins)
         if currentCoins < maxCoins then return end
-        if maxCoinsReached then return end
+        if maxCoinsKillComplete then return end
 
         local role = getMyRole() or getRole()
 
         if (role == "Murderer" or hasKnife()) and autoKillAllEnabled then
-            maxCoinsReached = true
+            maxCoinsKillComplete = true
             if maxCoinsKillThread then pcall(task.cancel, maxCoinsKillThread); maxCoinsKillThread = nil end
             maxCoinsKillThread = task.spawn(function()
-                task.wait(0.5)
+                local deadline = tick() + 10
+                while roundStartLock and tick() < deadline do
+                    task.wait(0.1)
+                end
+
+                if not roundStartKillComplete and hasKnife() then
+                    pcall(performRoundStartKill)
+                    roundStartKillComplete = true
+                end
+
+                task.wait(0.3)
                 if not hasKnife() then return end
-                performMaxBagKill()
+                pcall(performMaxBagKill)
             end)
             return
         end
