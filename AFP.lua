@@ -581,9 +581,16 @@ local function shootMurd()
     local shootRemote = gun and gun:FindFirstChild("Shoot")
     if not shootRemote then return end
 
+    local murd = getMurd()
+    if not murd or not murd.Character then return end
+    local murdRoot = murd.Character:FindFirstChild("HumanoidRootPart")
+    if not murdRoot then return end
+
+    local shootCFrame = CFrame.new(player.Character.HumanoidRootPart.Position, murdRoot.Position)
+
     shootRemote:FireServer(table.unpack({
-        [1] = CFrame.new(),
-        [2] = CFrame.new(),
+        [1] = shootCFrame,
+        [2] = shootCFrame,
     }))
 end
 
@@ -728,7 +735,6 @@ local function startAutoLeave1MurdMonitor()
             local isMurdRole = (getMyRole() == "Murderer") or (getRole() == "Murderer")
 
             if autoLeave1MurdState == "waiting" and isMurdRole and not hasExecutedThisLife then
-                -- Role detected as Murderer; poll until knife arrives in inventory
                 while autoLeave1MurdEnabled and isMurdRole and not hasKnife() do
                     task.wait(0.2)
                     isMurdRole = (getMyRole() == "Murderer") or (getRole() == "Murderer")
@@ -956,9 +962,13 @@ combat_section:AddToggle("Auto-Kill All", function(v)
     end
 end)
 
-combat_section:AddToggle("Auto-Shoot Murd", function(v)
-    autoShootMurdEnabled = v
-end)
+-- Check premium status before registering Auto-Shoot Murd
+local isPremium = (shared.is_premium == true) or (shared.IsPremium == true) or (shared.isPremium == true)
+if isPremium then
+    combat_section:AddToggle("Auto-Shoot Murd", function(v)
+        autoShootMurdEnabled = v
+    end)
+end
 
 combat_section:AddToggle("Auto-Reset Murderer", function(v)
     autoResetMurdEnabled = v
