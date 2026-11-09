@@ -962,13 +962,9 @@ combat_section:AddToggle("Auto-Kill All", function(v)
     end
 end)
 
--- Check premium status before registering Auto-Shoot Murd
-local isPremium = (shared.is_premium == true) or (shared.IsPremium == true) or (shared.isPremium == true)
-if isPremium then
-    combat_section:AddToggle("Auto-Shoot Murd", function(v)
-        autoShootMurdEnabled = v
-    end)
-end
+combat_section:AddToggle("Auto-Shoot Murd", function(v)
+    autoShootMurdEnabled = v
+end)
 
 combat_section:AddToggle("Auto-Reset Murderer", function(v)
     autoResetMurdEnabled = v
