@@ -540,20 +540,17 @@ local function killAllExceptOne()
 end
 
 local function equipGun()
-    local gun = getGun()
+    local char = player.Character
+    if not char then return false end
+    local gun = char:FindFirstChild("Gun") or (player:FindFirstChild("Backpack") and player.Backpack:FindFirstChild("Gun"))
     if not gun then return false end
-    if gun.Parent == player.Character then return true end
-    if gun.Parent == player.Backpack then
-        local char = player.Character
-        if char then
-            local humanoid = char:FindFirstChildOfClass("Humanoid")
-            if humanoid then
-                humanoid:EquipTool(gun)
-                for _ = 1, 10 do
-                    task.wait(0.1)
-                    if gun.Parent == char then return true end
-                end
-            end
+    if gun.Parent == char then return true end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        pcall(function() hum:EquipTool(gun) end)
+        for _ = 1, 10 do
+            task.wait(0.1)
+            if gun.Parent == char then return true end
         end
     end
     return false
@@ -574,24 +571,31 @@ local function unequipGun()
 end
 
 local function shootMurd()
-    if not equipGun() then return end
-    task.wait(0.2)
-
-    local gun = getGun()
-    local shootRemote = gun and gun:FindFirstChild("Shoot")
-    if not shootRemote then return end
-
+    equipGun()
     local murd = getMurd()
     if not murd or not murd.Character then return end
-    local murdRoot = murd.Character:FindFirstChild("HumanoidRootPart")
-    if not murdRoot then return end
+    local hrp = murd.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
 
-    local shootCFrame = CFrame.new(player.Character.HumanoidRootPart.Position, murdRoot.Position)
+    local char = player.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+    
+    local gun = char:FindFirstChild("Gun")
+    local shootRemote = gun and gun:FindFirstChild("Shoot")
+    if not shootRemote then
+        shootRemote = workspace:FindFirstChild(player.Name) and workspace[player.Name]:FindFirstChild("Gun") and workspace[player.Name].Gun:FindFirstChild("Shoot")
+    end
+    if not shootRemote then return end
 
-    shootRemote:FireServer(table.unpack({
-        [1] = shootCFrame,
-        [2] = shootCFrame,
-    }))
+    -- Regular directional shot from player to target (handled by your silent aim hook)
+    local shootCFrame = CFrame.new(char.HumanoidRootPart.Position, hrp.Position)
+
+    pcall(function()
+        shootRemote:FireServer(table.unpack({
+            [1] = shootCFrame,
+            [2] = shootCFrame,
+        }))
+    end)
 end
 
 local function startShootingMurderer()
@@ -600,7 +604,7 @@ local function startShootingMurderer()
         shootLoopThread = nil
     end
     shootLoopThread = task.spawn(function()
-        while true do
+        while autoShootMurdEnabled do
             if not hasGun() then break end
             local murd = getMurd()
             if not murd or not murd.Character then break end
@@ -610,7 +614,7 @@ local function startShootingMurderer()
             if not hasKnifeCheck(murd) then break end
 
             shootMurd()
-            task.wait(0.5)
+            task.wait(0.3)
         end
         unequipGun()
         shootLoopThread = nil
@@ -899,44 +903,28 @@ task.spawn(function()
         end
 
         if autoShootMurdEnabled then
-            if hasGun() then
-                startShootingMurderer()
-            else
-                maxCoinsReachedWithoutGun = true
-                if shootLoopThread then
-                    task.cancel(shootLoopThread)
-                    shootLoopThread = nil
+            task.spawn(function()
+                local waitStart = tick()
+                while player.Character and not hasGun() and (tick() - waitStart < 10) do
+                    task.wait(0.2)
                 end
-                shootLoopThread = task.spawn(function()
-                    local waitStart = tick()
-                    while player.Character and not hasGun() and (tick() - waitStart < 10) do
-                        task.wait(0.5)
-                    end
-                    if player.Character and hasGun() then
-                        maxCoinsReachedWithoutGun = false
-                        startShootingMurderer()
-                    else
-                        shootLoopThread = nil
-                        if maxCoinsReachedWithoutGun and autoResetMurdEnabled then
-                            task.spawn(function()
-                                task.wait(0.5)
-                                local target = getMurd()
-                                if target then resetPlayer(target, 3) end
-                            end)
-                        end
-                    end
-                end)
-            end
-        end
-
-        if role ~= "Murderer" and not hasKnife() and autoResetMurdEnabled then
-            if not (autoShootMurdEnabled and hasGun()) and not maxCoinsReachedWithoutGun then
-                task.spawn(function()
-                    task.wait(0.5)
+                if hasGun() then
+                    equipGun()
+                    task.wait(0.2)
+                    startShootingMurderer()
+                elseif autoResetMurdEnabled then
                     local target = getMurd()
                     if target then resetPlayer(target, 3) end
-                end)
-            end
+                end
+            end)
+        end
+
+        if role ~= "Murderer" and not hasKnife() and autoResetMurdEnabled and not autoShootMurdEnabled then
+            task.spawn(function()
+                task.wait(0.5)
+                local target = getMurd()
+                if target then resetPlayer(target, 3) end
+            end)
         end
     end)
 end)
