@@ -221,6 +221,8 @@ end
 player.CharacterAdded:Connect(function()
     hasExecutedThisLife = false
     maxCoinsReachedWithoutGun = false
+    autoLeave1MurdState = "waiting"
+    resetAllState = "waiting"
     if noRenderEnabled then
         task.wait(0.5)
         RunService:Set3dRenderingEnabled(false)
@@ -608,7 +610,7 @@ local function startShootingMurderer()
     end)
 end
 
--- Auto Leave 1 (Inno) logic (formerly Auto-Reset All)
+-- Auto Leave 1 (Inno) logic
 local function executeResetAll()
     local role = getMyRole() or getRole()
 
@@ -622,7 +624,6 @@ local function executeResetAll()
         local murderer = getAnyMurd()
         local sheriff = getSheriff()
         
-        -- Fling Sheriff first if present
         if sheriff and sheriff ~= player and not isWhitelisted(sheriff) then
             local tChar = sheriff.Character
             local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
@@ -632,7 +633,6 @@ local function executeResetAll()
             end
         end
 
-        -- Fling all other Innocents, leaving the Murderer alive
         local pList = Players:GetPlayers()
         for _, p in ipairs(pList) do
             if p ~= player and p ~= murderer and not isWhitelisted(p) then
@@ -716,36 +716,7 @@ local function toggleResetAll(enabled)
     updateNoclip()
 end
 
--- Auto Leave 1 (Murd) logic
-local function executeAutoLeave1Murd()
-    local role = getMyRole() or getRole()
-    if role == "Murderer" or hasKnife() then
-        -- Count innocents and check if there's only 1 sheriff
-        local innocentsCount = 0
-        local sheriffCount = 0
-        local pList = Players:GetPlayers()
-        for _, p in ipairs(pList) do
-            if p ~= player and not isWhitelisted(p) then
-                local bp = p:FindFirstChild("Backpack")
-                local char = p.Character
-                if (bp and bp:FindFirstChild("Gun")) or (char and char:FindFirstChild("Gun")) then
-                    sheriffCount = sheriffCount + 1
-                elseif not ((bp and bp:FindFirstChild("Knife")) or (char and char:FindFirstChild("Knife"))) then
-                    innocentsCount = innocentsCount + 1
-                end
-            end
-        end
-
-        if innocentsCount > 0 and sheriffCount == 1 then
-            if not hasExecutedThisLife then
-                hasExecutedThisLife = true
-                task.wait(1.0)
-                killAllExceptOne()
-            end
-        end
-    end
-end
-
+-- Auto Leave 1 (Murd) - Polling wait for knife arrival
 local function startAutoLeave1MurdMonitor()
     if autoLeave1MurdMaid then autoLeave1MurdMaid:Destroy() end
     autoLeave1MurdMaid = Maid.new()
@@ -754,16 +725,20 @@ local function startAutoLeave1MurdMonitor()
     local thread = task.spawn(function()
         while autoLeave1MurdEnabled do
             setNoclip(true)
-            roleCache.data = nil
-            roleCache.timestamp = 0
-            local role = getMyRole() or getRole()
+            local isMurdRole = (getMyRole() == "Murderer") or (getRole() == "Murderer")
 
-            if autoLeave1MurdState == "waiting" then
-                if role == "Murderer" or hasKnife() then
-                    if not hasExecutedThisLife then
-                        executeAutoLeave1Murd()
-                        autoLeave1MurdState = "done"
-                    end
+            if autoLeave1MurdState == "waiting" and isMurdRole and not hasExecutedThisLife then
+                -- Role detected as Murderer; poll until knife arrives in inventory
+                while autoLeave1MurdEnabled and isMurdRole and not hasKnife() do
+                    task.wait(0.2)
+                    isMurdRole = (getMyRole() == "Murderer") or (getRole() == "Murderer")
+                end
+
+                if autoLeave1MurdEnabled and hasKnife() and not hasExecutedThisLife then
+                    hasExecutedThisLife = true
+                    task.wait(0.5)
+                    killAllExceptOne()
+                    autoLeave1MurdState = "done"
                 end
             elseif autoLeave1MurdState == "done" then
                 if not hasKnife() then
