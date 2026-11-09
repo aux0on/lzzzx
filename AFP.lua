@@ -570,6 +570,25 @@ local function unequipGun()
     end
 end
 
+-- Dynamic remote detection to bypass obfuscation and hidden names
+local function findGunShootRemote(gun)
+    if not gun then return nil end
+
+    -- Check for standard named RemoteEvent/RemoteFunction first
+    local standardRemote = gun:FindFirstChild("Shoot") or gun:FindFirstChild("shoot")
+    if standardRemote and (standardRemote:IsA("RemoteEvent") or standardRemote:IsA("RemoteFunction")) then
+        return standardRemote
+    end
+
+    -- Scan descendants for any obfuscated RemoteEvent/RemoteFunction
+    for _, child in ipairs(gun:GetDescendants()) do
+        if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
+            return child
+        end
+    end
+    return nil
+end
+
 local function shootMurd()
     equipGun()
     local murd = getMurd()
@@ -580,21 +599,26 @@ local function shootMurd()
     local char = player.Character
     if not char or not char:FindFirstChild("HumanoidRootPart") then return end
     
-    local gun = char:FindFirstChild("Gun")
-    local shootRemote = gun and gun:FindFirstChild("Shoot")
-    if not shootRemote then
-        shootRemote = workspace:FindFirstChild(player.Name) and workspace[player.Name]:FindFirstChild("Gun") and workspace[player.Name].Gun:FindFirstChild("Shoot")
-    end
+    local gun = char:FindFirstChild("Gun") or (player:FindFirstChild("Backpack") and player.Backpack:FindFirstChild("Gun"))
+    if not gun then return end
+
+    local shootRemote = findGunShootRemote(gun)
     if not shootRemote then return end
 
-    -- Regular directional shot from player to target (handled by your silent aim hook)
     local shootCFrame = CFrame.new(char.HumanoidRootPart.Position, hrp.Position)
 
     pcall(function()
-        shootRemote:FireServer(table.unpack({
-            [1] = shootCFrame,
-            [2] = shootCFrame,
-        }))
+        if shootRemote:IsA("RemoteEvent") then
+            shootRemote:FireServer(table.unpack({
+                [1] = shootCFrame,
+                [2] = shootCFrame,
+            }))
+        elseif shootRemote:IsA("RemoteFunction") then
+            shootRemote:InvokeServer(table.unpack({
+                [1] = shootCFrame,
+                [2] = shootCFrame,
+            }))
+        end
     end)
 end
 
