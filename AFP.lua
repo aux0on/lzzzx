@@ -173,7 +173,7 @@ local blackScreenGui = nil
 local blackScreenFrame = nil
 
 local shootLoopThread = nil
-local maxCoinsReachedWithoutGun = false
+local lastShotTick = 0 -- Tracks reload cooldown
 
 local function CreateBlackScreen()
     if blackScreenGui then return end
@@ -220,7 +220,7 @@ end
 
 player.CharacterAdded:Connect(function()
     hasExecutedThisLife = false
-    maxCoinsReachedWithoutGun = false
+    lastShotTick = 0
     autoLeave1MurdState = "waiting"
     resetAllState = "waiting"
     if noRenderEnabled then
@@ -570,17 +570,13 @@ local function unequipGun()
     end
 end
 
--- Dynamic remote detection to bypass obfuscation and hidden names
 local function findGunShootRemote(gun)
     if not gun then return nil end
-
-    -- Check for standard named RemoteEvent/RemoteFunction first
     local standardRemote = gun:FindFirstChild("Shoot") or gun:FindFirstChild("shoot")
     if standardRemote and (standardRemote:IsA("RemoteEvent") or standardRemote:IsA("RemoteFunction")) then
         return standardRemote
     end
 
-    -- Scan descendants for any obfuscated RemoteEvent/RemoteFunction
     for _, child in ipairs(gun:GetDescendants()) do
         if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
             return child
@@ -590,36 +586,48 @@ local function findGunShootRemote(gun)
 end
 
 local function shootMurd()
-    equipGun()
+    -- Respect the ~3 second reload cooldown before firing again
+    if tick() - lastShotTick < 3.0 then return false end
+
+    if not equipGun() then return false end
+
     local murd = getMurd()
-    if not murd or not murd.Character then return end
+    if not murd or not murd.Character then return false end
     local hrp = murd.Character:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
+    if not hrp then return false end
 
     local char = player.Character
-    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
-    
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return false end
+
     local gun = char:FindFirstChild("Gun") or (player:FindFirstChild("Backpack") and player.Backpack:FindFirstChild("Gun"))
-    if not gun then return end
+    if not gun then return false end
 
     local shootRemote = findGunShootRemote(gun)
-    if not shootRemote then return end
+    if not shootRemote then return false end
 
     local shootCFrame = CFrame.new(char.HumanoidRootPart.Position, hrp.Position)
 
+    local fired = false
     pcall(function()
         if shootRemote:IsA("RemoteEvent") then
             shootRemote:FireServer(table.unpack({
                 [1] = shootCFrame,
                 [2] = shootCFrame,
             }))
+            fired = true
         elseif shootRemote:IsA("RemoteFunction") then
             shootRemote:InvokeServer(table.unpack({
                 [1] = shootCFrame,
                 [2] = shootCFrame,
             }))
+            fired = true
         end
     end)
+
+    if fired then
+        lastShotTick = tick()
+    end
+    return fired
 end
 
 local function startShootingMurderer()
@@ -629,16 +637,16 @@ local function startShootingMurderer()
     end
     shootLoopThread = task.spawn(function()
         while autoShootMurdEnabled do
-            if not hasGun() then break end
-            local murd = getMurd()
-            if not murd or not murd.Character then break end
-            local humanoid = murd.Character:FindFirstChildOfClass("Humanoid")
-            if not humanoid or humanoid.Health <= 0 then break end
-
-            if not hasKnifeCheck(murd) then break end
-
-            shootMurd()
-            task.wait(0.3)
+            if hasGun() then
+                local murd = getMurd()
+                if murd and murd.Character then
+                    local humanoid = murd.Character:FindFirstChildOfClass("Humanoid")
+                    if humanoid and humanoid.Health > 0 then
+                        shootMurd()
+                    end
+                end
+            end
+            task.wait(0.2)
         end
         unequipGun()
         shootLoopThread = nil
@@ -658,7 +666,7 @@ local function executeResetAll()
     else
         local murderer = getAnyMurd()
         local sheriff = getSheriff()
-        
+
         if sheriff and sheriff ~= player and not isWhitelisted(sheriff) then
             local tChar = sheriff.Character
             local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
