@@ -173,7 +173,6 @@ local blackScreenGui = nil
 local blackScreenFrame = nil
 
 local shootLoopThread = nil
-local lastShotTick = 0 -- Tracks reload cooldown
 
 local function CreateBlackScreen()
     if blackScreenGui then return end
@@ -220,7 +219,6 @@ end
 
 player.CharacterAdded:Connect(function()
     hasExecutedThisLife = false
-    lastShotTick = 0
     autoLeave1MurdState = "waiting"
     resetAllState = "waiting"
     if noRenderEnabled then
@@ -548,10 +546,7 @@ local function equipGun()
     local hum = char:FindFirstChildOfClass("Humanoid")
     if hum then
         pcall(function() hum:EquipTool(gun) end)
-        for _ = 1, 10 do
-            task.wait(0.1)
-            if gun.Parent == char then return true end
-        end
+        return true
     end
     return false
 end
@@ -586,48 +581,37 @@ local function findGunShootRemote(gun)
 end
 
 local function shootMurd()
-    -- Respect the ~3 second reload cooldown before firing again
-    if tick() - lastShotTick < 3.0 then return false end
-
-    if not equipGun() then return false end
+    equipGun()
 
     local murd = getMurd()
-    if not murd or not murd.Character then return false end
+    if not murd or not murd.Character then return end
     local hrp = murd.Character:FindFirstChild("HumanoidRootPart")
-    if not hrp then return false end
+    if not hrp then return end
 
     local char = player.Character
-    if not char or not char:FindFirstChild("HumanoidRootPart") then return false end
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
 
     local gun = char:FindFirstChild("Gun") or (player:FindFirstChild("Backpack") and player.Backpack:FindFirstChild("Gun"))
-    if not gun then return false end
+    if not gun then return end
 
     local shootRemote = findGunShootRemote(gun)
-    if not shootRemote then return false end
+    if not shootRemote then return end
 
     local shootCFrame = CFrame.new(char.HumanoidRootPart.Position, hrp.Position)
 
-    local fired = false
     pcall(function()
         if shootRemote:IsA("RemoteEvent") then
             shootRemote:FireServer(table.unpack({
                 [1] = shootCFrame,
                 [2] = shootCFrame,
             }))
-            fired = true
         elseif shootRemote:IsA("RemoteFunction") then
             shootRemote:InvokeServer(table.unpack({
                 [1] = shootCFrame,
                 [2] = shootCFrame,
             }))
-            fired = true
         end
     end)
-
-    if fired then
-        lastShotTick = tick()
-    end
-    return fired
 end
 
 local function startShootingMurderer()
@@ -638,15 +622,9 @@ local function startShootingMurderer()
     shootLoopThread = task.spawn(function()
         while autoShootMurdEnabled do
             if hasGun() then
-                local murd = getMurd()
-                if murd and murd.Character then
-                    local humanoid = murd.Character:FindFirstChildOfClass("Humanoid")
-                    if humanoid and humanoid.Health > 0 then
-                        shootMurd()
-                    end
-                end
+                shootMurd()
             end
-            task.wait(0.2)
+            task.wait(1.0)
         end
         unequipGun()
         shootLoopThread = nil
