@@ -1176,6 +1176,63 @@ combat_section:AddButton("Clear Whitelist", function()
     shared.Notify("Whitelist cleared.", 2)
 end)
 
+local autoHopEnabled = false
+local autoHopConn = nil
+local autoHopDebounce = false
+
+local hopSection = afp:AddSection("Server Options")
+hopSection:AddToggle("Server Hop at 1 Player", function(enabled)
+    autoHopEnabled = enabled
+
+    if autoHopConn then
+        autoHopConn:Disconnect()
+        autoHopConn = nil
+    end
+
+    if enabled then
+        autoHopConn = RunService.Heartbeat:Connect(function()
+            if not autoHopEnabled or autoHopDebounce then return end
+            if #Players:GetPlayers() > 1 then return end
+
+            autoHopDebounce = true
+
+            local placeId = game.PlaceId
+            local jobId = game.JobId
+            local url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(placeId)
+            local success, servers = pcall(function()
+                return game:GetService("HttpService"):JSONDecode(game:HttpGet(url))
+            end)
+
+            local hopped = false
+            if success and servers and servers.data then
+                local available = {}
+                for _, server in ipairs(servers.data) do
+                    if server.id ~= jobId and server.playing < server.maxPlayers then
+                        table.insert(available, server)
+                    end
+                end
+                if #available > 0 then
+                    shared.Notify("Server hopping...", 2)
+                    game:GetService("TeleportService"):TeleportToPlaceInstance(placeId, available[math.random(#available)].id, player)
+                    hopped = true
+                end
+            end
+
+            if not hopped then
+                shared.Notify("No server found to hop to", 3)
+                autoHopDebounce = false
+            end
+        end)
+    end
+end)
+
+RootMaid:GiveTask(function()
+    if autoHopConn then
+        autoHopConn:Disconnect()
+        autoHopConn = nil
+    end
+end)
+
 local function setupAntiAFK()
     if not player then return end
     if afkConnection then
