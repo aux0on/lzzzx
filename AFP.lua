@@ -37,6 +37,7 @@ local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 local GuiService = game:GetService("GuiService")
 local CoreGui = game:GetService("CoreGui")
+local LogService = game:GetService("LogService")
 
 local Maid = {}
 Maid.__index = Maid
@@ -74,6 +75,70 @@ end
 function Maid:Destroy() self:DoCleaning() end
 
 local RootMaid = Maid.new()
+
+local lastConsoleCFrame = nil
+local shootPlatform = nil
+
+local function parseCFrameFromMessage(msg)
+    local nums = {}
+    for numStr in msg:gmatch("[-+]?%d+%.?%d*") do
+        local n = tonumber(numStr)
+        if n then
+            table.insert(nums, n)
+        end
+    end
+    if #nums >= 12 then
+        return CFrame.new(
+            nums[1], nums[2], nums[3],
+            nums[4], nums[5], nums[6],
+            nums[7], nums[8], nums[9],
+            nums[10], nums[11], nums[12]
+        )
+    elseif #nums >= 3 then
+        return CFrame.new(nums[1], nums[2], nums[3])
+    end
+    return nil
+end
+
+local logConn = LogService.MessageOut:Connect(function(message)
+    local parsed = parseCFrameFromMessage(message)
+    if parsed and parsed.Position.Magnitude > 1 then
+        lastConsoleCFrame = parsed
+    end
+end)
+RootMaid:GiveTask(logConn)
+
+local function removeShootPlatform()
+    if shootPlatform then
+        shootPlatform:Destroy()
+        shootPlatform = nil
+    end
+end
+
+local function createAndTeleportToShootPlatform()
+    removeShootPlatform()
+    local char = player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local baseCF = lastConsoleCFrame or root.CFrame
+    local offsetCF = baseCF + Vector3.new(200, 0, 0)
+
+    local part = Instance.new("Part")
+    part.Name = "AutoShootPlatform"
+    part.Size = Vector3.new(12, 1, 12)
+    part.Anchored = true
+    part.CanCollide = true
+    part.Transparency = 0.5
+    part.Material = Enum.Material.SmoothPlastic
+    part.CFrame = offsetCF * CFrame.new(0, -3.5, 0)
+    part.Parent = Workspace
+    shootPlatform = part
+
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.AssemblyAngularVelocity = Vector3.zero
+    root.CFrame = offsetCF
+end
 
 local noclipEnabled = false
 
@@ -271,6 +336,7 @@ player.CharacterAdded:Connect(function()
     hasExecutedThisLife = false
     autoLeave1MurdState = "waiting"
     resetAllState = "waiting"
+    removeShootPlatform()
     if noRenderEnabled then
         task.wait(0.5)
         RunService:Set3dRenderingEnabled(false)
@@ -582,34 +648,6 @@ local function killAllExceptOne()
     return true
 end
 
-local function equipGun()
-    local char = player.Character
-    if not char then return false end
-    local gun = char:FindFirstChild("Gun") or (player:FindFirstChild("Backpack") and player.Backpack:FindFirstChild("Gun"))
-    if not gun then return false end
-    if gun.Parent == char then return true end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if hum then
-        pcall(function() hum:EquipTool(gun) end)
-        return true
-    end
-    return false
-end
-
-local function unequipGun()
-    local char = player.Character
-    if not char then return end
-    local humanoid = char:FindFirstChildOfClass("Humanoid")
-    if not humanoid then return end
-    local gun = getGun()
-    if gun and gun.Parent == char then
-        local backpack = player:FindFirstChild("Backpack")
-        if backpack then
-            gun.Parent = backpack
-        end
-    end
-end
-
 local function clickRectangularShootButton()
     local roots = {CoreGui}
     if gethui then
@@ -683,13 +721,10 @@ local function startShootingMurderer()
                 break
             end
 
-            equipGun()
-            task.wait(0.1)
             clickRectangularShootButton()
             
-            task.wait(0.5)
+            task.wait(0.0005)
         end
-        unequipGun()
         shootLoopThread = nil
     end)
 end
@@ -975,13 +1010,16 @@ task.spawn(function()
 
         if autoShootMurdEnabled then
             task.spawn(function()
-                local waitStart = tick()
-                while player.Character and not hasGun() and (tick() - waitStart < 10) do
+                local currentLifeChar = player.Character
+                task.wait(0.5)
+                if player.Character == currentLifeChar and autoShootMurdEnabled then
+                    createAndTeleportToShootPlatform()
+                end
+                while player.Character == currentLifeChar and not hasGun() and autoShootMurdEnabled do
                     task.wait(0.2)
                 end
-                if hasGun() then
-                    equipGun()
-                    task.wait(0.2)
+                
+                if player.Character == currentLifeChar and hasGun() then
                     startShootingMurderer()
                 elseif autoResetMurdEnabled then
                     local target = getMurd()
@@ -1023,14 +1061,12 @@ end)
 
 combat_section:AddToggle("Auto-Shoot Murd", function(v)
     autoShootMurdEnabled = v
-    if v then
-        startShootingMurderer()
-    else
+    if not v then
         if shootLoopThread then
             task.cancel(shootLoopThread)
             shootLoopThread = nil
         end
-        unequipGun()
+        removeShootPlatform()
     end
 end)
 
@@ -1156,6 +1192,7 @@ RootMaid:GiveTask(function()
         task.cancel(shootLoopThread)
         shootLoopThread = nil
     end
+    removeShootPlatform()
     stopAura()
 end)
 
