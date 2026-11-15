@@ -666,9 +666,17 @@ local function clickRectangularShootButton()
                                 pcall(function() firesignal(targetBtn.Activated) end)
                             end
 
-                            VIM:SendMouseButtonEvent(tapX, tapY, 0, true, game, 0)
-                            task.wait(0.05)
-                            VIM:SendMouseButtonEvent(tapX, tapY, 0, false, game, 0)
+                            if UserInputService.TouchEnabled then
+                                pcall(function()
+                                    VIM:SendTouchEvent(1, tapX, tapY, true, game)
+                                    task.wait(0.05)
+                                    VIM:SendTouchEvent(1, tapX, tapY, false, game)
+                                end)
+                            else
+                                VIM:SendMouseButtonEvent(tapX, tapY, 0, true, game, 0)
+                                task.wait(0.05)
+                                VIM:SendMouseButtonEvent(tapX, tapY, 0, false, game, 0)
+                            end
                             clicked = true
                             break
                         end
@@ -1008,7 +1016,6 @@ task.spawn(function()
                     createAndTeleportToShootPlatform()
                 end
                 
-                -- Directly check loop instead of blocking indefinitely
                 local timeoutTick = tick() + 10
                 while player.Character == currentLifeChar and not hasGun() and autoShootMurdEnabled and tick() < timeoutTick do
                     task.wait(0.2)
