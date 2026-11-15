@@ -590,31 +590,26 @@ local function killAllExceptOne()
     local pList = Players:GetPlayers()
     for _, p in ipairs(pList) do
         if p ~= player and p.Character then
-            if killWlUsersAtMaxEnabled or not isWhitelisted(p) then
-                local upperTorso = p.Character:FindFirstChild("UpperTorso")
-                if upperTorso then
-                    table.insert(eligiblePlayers, {player = p, torso = upperTorso})
-                end
+            local upperTorso = p.Character:FindFirstChild("UpperTorso")
+            if upperTorso then
+                table.insert(eligiblePlayers, {player = p, torso = upperTorso})
             end
         end
     end
 
     if #eligiblePlayers < 1 then return false end
 
-    local whitelistedEntry = nil
+    local survivor = nil
     if not killWlUsersAtMaxEnabled then
         for _, entry in ipairs(eligiblePlayers) do
             if isWhitelisted(entry.player) then
-                whitelistedEntry = entry
+                survivor = entry.torso
                 break
             end
         end
     end
 
-    local survivor
-    if whitelistedEntry then
-        survivor = whitelistedEntry.torso
-    else
+    if not survivor then
         local survivorIndex = math.random(1, #eligiblePlayers)
         survivor = eligiblePlayers[survivorIndex].torso
     end
