@@ -225,6 +225,7 @@ local resetAllEnabled = false
 local autoLeave1MurdEnabled = false
 local noRenderEnabled = false
 local autoGGEnabled = false
+local coinAuraEnabled = false
 
 local afkConnection
 local isResetting = false
@@ -925,6 +926,7 @@ local auraData = {
     enabled = false,
     thread = nil,
     radius = 8,
+    activeThisLife = false,
 }
 
 local function getCoinContainers()
@@ -972,6 +974,10 @@ end
 
 local function startAura()
     auraData.enabled = true
+    if auraData.thread then
+        auraData.thread:Disconnect()
+        auraData.thread = nil
+    end
     auraData.thread = RunService.Heartbeat:Connect(collectNearbyCoins)
 end
 
@@ -983,9 +989,18 @@ local function stopAura()
     end
 end
 
+player.CharacterAdded:Connect(function()
+    auraData.activeThisLife = false
+end)
+
 task.spawn(function()
     local CoinCollected = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("CoinCollected")
     CoinCollected.OnClientEvent:Connect(function(_, currentCoins, maxCoins)
+        if coinAuraEnabled and not auraData.activeThisLife and currentCoins >= 1 then
+            auraData.activeThisLife = true
+            startAura()
+        end
+
         if currentCoins < maxCoins then return end
 
         local role = getMyRole() or getRole()
@@ -1096,8 +1111,9 @@ combat_section:AddToggle("Auto Leave 1 (Murd)", function(v)
 end)
 
 combat_section:AddToggle("Coin Aura", function(v)
+    coinAuraEnabled = v
     if v then
-        startAura()
+        auraData.activeThisLife = false
     else
         stopAura()
     end
