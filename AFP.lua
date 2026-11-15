@@ -141,6 +141,7 @@ local function createAndTeleportToShootPlatform()
 end
 
 local noclipEnabled = false
+local noclipSteppedConn = nil
 
 local function restoreCollision()
     local character = player.Character
@@ -165,23 +166,27 @@ end
 local function setNoclip(state)
     noclipEnabled = state
     if not state then
+        if noclipSteppedConn then
+            noclipSteppedConn:Disconnect()
+            noclipSteppedConn = nil
+        end
         restoreCollision()
     else
         applyNoclipNow()
-    end
-end
-
-local noclipSteppedConn = RunService.Stepped:Connect(function()
-    if not noclipEnabled then return end
-    local character = player.Character
-    if not character then return end
-    for _, part in ipairs(character:GetDescendants()) do
-        if part:IsA("BasePart") and part.CanCollide then
-            part.CanCollide = false
+        if not noclipSteppedConn then
+            noclipSteppedConn = RunService.Stepped:Connect(function()
+                if not noclipEnabled then return end
+                local character = player.Character
+                if not character then return end
+                for _, part in ipairs(character:GetDescendants()) do
+                    if part:IsA("BasePart") and part.CanCollide then
+                        part.CanCollide = false
+                    end
+                end
+            end)
         end
     end
-end)
-RootMaid:GiveTask(noclipSteppedConn)
+end
 
 local roleCache = {
     data      = nil,
@@ -724,7 +729,7 @@ local function startShootingMurderer()
 
             clickRectangularShootButton()
             
-            task.wait(0.0005)
+            task.wait(3)
         end
         shootLoopThread = nil
     end)
@@ -766,6 +771,10 @@ local function executeResetAll()
     end
 end
 
+local function updateNoclip()
+    setNoclip(autoResetMurdEnabled or autoResetSheriffEnabled or resetAllEnabled)
+end
+
 local function startResetAllMonitor()
     if resetAllMaid then resetAllMaid:Destroy() end
     resetAllMaid = Maid.new()
@@ -773,7 +782,7 @@ local function startResetAllMonitor()
 
     local thread = task.spawn(function()
         while resetAllEnabled do
-            setNoclip(true)
+            updateNoclip()
             roleCache.data = nil
             roleCache.timestamp = 0
             local role = getMyRole() or getRole()
@@ -821,10 +830,6 @@ local function stopResetAllMonitor()
     resetAllState = "waiting"
 end
 
-local function updateNoclip()
-    setNoclip(autoResetSheriffEnabled or autoResetMurdEnabled or resetAllEnabled or autoLeave1MurdEnabled)
-end
-
 local function toggleResetAll(enabled)
     resetAllEnabled = enabled
     if enabled then
@@ -842,7 +847,6 @@ local function startAutoLeave1MurdMonitor()
 
     local thread = task.spawn(function()
         while autoLeave1MurdEnabled do
-            setNoclip(true)
             local isMurdRole = (getMyRole() == "Murderer") or (getRole() == "Murderer")
 
             if autoLeave1MurdState == "waiting" and isMurdRole and not hasExecutedThisLife then
@@ -884,7 +888,6 @@ local function toggleAutoLeave1Murd(enabled)
     else
         stopAutoLeave1MurdMonitor()
     end
-    updateNoclip()
 end
 
 local function startSheriffFling()
@@ -892,7 +895,7 @@ local function startSheriffFling()
     sheriffFlingMaid = Maid.new()
     local thread = task.spawn(function()
         while autoResetSheriffEnabled do
-            setNoclip(true)
+            updateNoclip()
             local role = getMyRole() or getRole()
             if role ~= "Murderer" then
                 local target = getSheriff()
@@ -996,7 +999,7 @@ end)
 task.spawn(function()
     local CoinCollected = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("CoinCollected")
     CoinCollected.OnClientEvent:Connect(function(_, currentCoins, maxCoins)
-        if coinAuraEnabled and not auraData.activeThisLife and currentCoins >= 1 then
+        if coinAuraEnabled and not auraData.activeThisLife and currentCoins >= 5 then
             auraData.activeThisLife = true
             startAura()
         end
