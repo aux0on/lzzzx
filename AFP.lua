@@ -28,9 +28,15 @@ local function setupAntiVoid()
     end)
 end
 
+local Camera = workspace.CurrentCamera
+local vU = game:GetService("VirtualUser")
+local VIM = game:GetService("VirtualInputManager")
+local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
+local GuiService = game:GetService("GuiService")
+local CoreGui = game:GetService("CoreGui")
 
 local Maid = {}
 Maid.__index = Maid
@@ -217,6 +223,50 @@ local function CleanupNoRender()
     end
 end
 
+local function closeOverdriveMenu()
+    local playerGui = player:FindFirstChild("PlayerGui")
+    local roots = {CoreGui}
+    if gethui then
+        pcall(function() table.insert(roots, gethui()) end)
+    end
+    if playerGui then table.insert(roots, playerGui) end
+
+    for _, root in ipairs(roots) do
+        pcall(function()
+            for _, gui in ipairs(root:GetDescendants()) do
+                if gui:IsA("TextLabel") and gui.Text:find("OVERDRIVE H") then
+                    local window = gui.Parent
+                    while window and not window:IsA("ScreenGui") do
+                        for _, btn in ipairs(window:GetDescendants()) do
+                            if (btn:IsA("ImageButton") or btn:IsA("TextButton")) and btn.Visible then
+                                local relX = btn.AbsolutePosition.X - window.AbsolutePosition.X
+                                local relY = btn.AbsolutePosition.Y - window.AbsolutePosition.Y
+                                
+                                if relX > (window.AbsoluteSize.X * 0.75) and relY < 80 then
+                                    local inset = GuiService:GetGuiInset()
+                                    local tapX = btn.AbsolutePosition.X + (btn.AbsoluteSize.X / 2)
+                                    local tapY = btn.AbsolutePosition.Y + (btn.AbsoluteSize.Y / 2) + inset.Y
+
+                                    if firesignal then
+                                        pcall(function() firesignal(btn.MouseButton1Click) end)
+                                        pcall(function() firesignal(btn.Activated) end)
+                                    end
+
+                                    VIM:SendMouseButtonEvent(tapX, tapY, 0, true, game, 0)
+                                    task.wait(0.05)
+                                    VIM:SendMouseButtonEvent(tapX, tapY, 0, false, game, 0)
+                                    return
+                                end
+                            end
+                        end
+                        window = window.Parent
+                    end
+                end
+            end
+        end)
+    end
+end
+
 player.CharacterAdded:Connect(function()
     hasExecutedThisLife = false
     autoLeave1MurdState = "waiting"
@@ -231,6 +281,8 @@ player.CharacterAdded:Connect(function()
         shootLoopThread = nil
     end
 end)
+
+task.delay(1.5, closeOverdriveMenu)
 
 local function getRole()
     local bp = player:FindFirstChild("Backpack")
@@ -342,13 +394,6 @@ end
 
 local function hasKnife()
     return getKnife() ~= nil
-end
-
-local function hasKnifeCheck(plr)
-    if not plr or not plr.Parent then return false end
-    local char = plr.Character
-    local bp = plr:FindFirstChild("Backpack")
-    return (char and char:FindFirstChild("Knife")) or (bp and bp:FindFirstChild("Knife"))
 end
 
 local function touch(a, b)
@@ -565,53 +610,56 @@ local function unequipGun()
     end
 end
 
-local function findGunShootRemote(gun)
-    if not gun then return nil end
-    local standardRemote = gun:FindFirstChild("Shoot") or gun:FindFirstChild("shoot")
-    if standardRemote and (standardRemote:IsA("RemoteEvent") or standardRemote:IsA("RemoteFunction")) then
-        return standardRemote
+local function clickRectangularShootButton()
+    local roots = {CoreGui}
+    if gethui then
+        pcall(function() table.insert(roots, gethui()) end)
+    end
+    local playerGui = player:FindFirstChild("PlayerGui")
+    if playerGui then
+        table.insert(roots, playerGui)
     end
 
-    for _, child in ipairs(gun:GetDescendants()) do
-        if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
-            return child
-        end
+    local clicked = false
+    for _, root in ipairs(roots) do
+        if clicked then break end
+        pcall(function()
+            for _, gui in ipairs(root:GetDescendants()) do
+                if (gui:IsA("TextButton") or gui:IsA("ImageButton") or gui:IsA("TextLabel")) and gui.Visible then
+                    local nameLower = gui.Name:lower()
+                    local textLower = (gui:IsA("TextButton") or gui:IsA("TextLabel")) and gui.Text:lower() or ""
+                    
+                    if (textLower == "shoot" or textLower == "shoot murderer" or nameLower:find("shoot")) 
+                        and not textLower:find("auto") 
+                        and not textLower:find("piercer") then
+                        
+                        local targetBtn = gui
+                        if gui:IsA("TextLabel") then
+                            targetBtn = gui.Parent:FindFirstChildWhichIsA("GuiButton") or gui.Parent
+                        end
+
+                        if targetBtn and targetBtn.AbsoluteSize.X > 0 and targetBtn.AbsoluteSize.Y > 0 then
+                            local inset = GuiService:GetGuiInset()
+                            local tapX = targetBtn.AbsolutePosition.X + (targetBtn.AbsoluteSize.X / 2)
+                            local tapY = targetBtn.AbsolutePosition.Y + (targetBtn.AbsoluteSize.Y / 2) + inset.Y
+
+                            if targetBtn:IsA("GuiButton") and firesignal then
+                                pcall(function() firesignal(targetBtn.MouseButton1Click) end)
+                                pcall(function() firesignal(targetBtn.Activated) end)
+                            end
+
+                            VIM:SendMouseButtonEvent(tapX, tapY, 0, true, game, 0)
+                            task.wait(0.05)
+                            VIM:SendMouseButtonEvent(tapX, tapY, 0, false, game, 0)
+                            clicked = true
+                            break
+                        end
+                    end
+                end
+            end
+        end)
     end
-    return nil
-end
-
-local function shootMurd()
-    equipGun()
-
-    local murd = getMurd()
-    if not murd or not murd.Character then return end
-    local hrp = murd.Character:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-
-    local char = player.Character
-    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
-
-    local gun = char:FindFirstChild("Gun") or (player:FindFirstChild("Backpack") and player.Backpack:FindFirstChild("Gun"))
-    if not gun then return end
-
-    local shootRemote = findGunShootRemote(gun)
-    if not shootRemote then return end
-
-    local shootCFrame = CFrame.new(char.HumanoidRootPart.Position, hrp.Position)
-
-    pcall(function()
-        if shootRemote:IsA("RemoteEvent") then
-            shootRemote:FireServer(table.unpack({
-                [1] = shootCFrame,
-                [2] = shootCFrame,
-            }))
-        elseif shootRemote:IsA("RemoteFunction") then
-            shootRemote:InvokeServer(table.unpack({
-                [1] = shootCFrame,
-                [2] = shootCFrame,
-            }))
-        end
-    end)
+    return clicked
 end
 
 local function startShootingMurderer()
@@ -621,17 +669,31 @@ local function startShootingMurderer()
     end
     shootLoopThread = task.spawn(function()
         while autoShootMurdEnabled do
-            if hasGun() then
-                shootMurd()
+            if not hasGun() then
+                break
             end
-            task.wait(1.0)
+
+            local murd = getMurd()
+            if not murd or not murd.Character then
+                break
+            end
+
+            local humanoid = murd.Character:FindFirstChildOfClass("Humanoid")
+            if not humanoid or humanoid.Health <= 0 then
+                break
+            end
+
+            equipGun()
+            task.wait(0.1)
+            clickRectangularShootButton()
+            
+            task.wait(0.5)
         end
         unequipGun()
         shootLoopThread = nil
     end)
 end
 
--- Auto Leave 1 (Inno) logic
 local function executeResetAll()
     local role = getMyRole() or getRole()
 
@@ -737,7 +799,6 @@ local function toggleResetAll(enabled)
     updateNoclip()
 end
 
--- Auto Leave 1 (Murd) - Polling wait for knife arrival
 local function startAutoLeave1MurdMonitor()
     if autoLeave1MurdMaid then autoLeave1MurdMaid:Destroy() end
     autoLeave1MurdMaid = Maid.new()
@@ -962,7 +1023,18 @@ end)
 
 combat_section:AddToggle("Auto-Shoot Murd", function(v)
     autoShootMurdEnabled = v
+    if v then
+        startShootingMurderer()
+    else
+        if shootLoopThread then
+            task.cancel(shootLoopThread)
+            shootLoopThread = nil
+        end
+        unequipGun()
+    end
 end)
+
+combat_section:AddLabel("You must enable piercer bullet (premium feature) and the rectangular shoot murderer button for auto shoot murderer to work.")
 
 combat_section:AddToggle("Auto-Reset Murderer", function(v)
     autoResetMurdEnabled = v
@@ -1068,6 +1140,7 @@ end
 
 setupAntiVoid()
 setupAntiAFK()
+task.delay(1.5, closeOverdriveMenu)
 
 RootMaid:GiveTask(function()
     if trueAntiVoidConnection then
