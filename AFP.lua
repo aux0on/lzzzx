@@ -77,6 +77,7 @@ function Maid:Destroy() self:DoCleaning() end
 local RootMaid = Maid.new()
 
 local lastConsoleCFrame = nil
+local hasCapturedCFrameThisLife = false
 local shootPlatform = nil
 
 local function parseCFrameFromMessage(msg)
@@ -101,9 +102,11 @@ local function parseCFrameFromMessage(msg)
 end
 
 local logConn = LogService.MessageOut:Connect(function(message)
+    if hasCapturedCFrameThisLife then return end
     local parsed = parseCFrameFromMessage(message)
     if parsed and parsed.Position.Magnitude > 1 then
         lastConsoleCFrame = parsed
+        hasCapturedCFrameThisLife = true
     end
 end)
 RootMaid:GiveTask(logConn)
@@ -299,6 +302,8 @@ player.CharacterAdded:Connect(function()
     hasExecutedThisLife = false
     autoLeave1MurdState = "waiting"
     resetAllState = "waiting"
+    hasCapturedCFrameThisLife = false
+    lastConsoleCFrame = nil
     removeShootPlatform()
     if noRenderEnabled then
         task.wait(0.5)
@@ -591,20 +596,29 @@ local function killAllExceptOne()
     for _, p in ipairs(pList) do
         if p ~= player and p.Character then
             local upperTorso = p.Character:FindFirstChild("UpperTorso")
-            if upperTorso and not isWhitelisted(p) then
-                table.insert(allPlayers, upperTorso)
+            if upperTorso then
+                table.insert(allPlayers, {player = p, torso = upperTorso})
             end
         end
     end
 
     if #allPlayers < 1 then return false end
 
-    local survivorIndex = math.random(1, #allPlayers)
-    local survivor = allPlayers[survivorIndex]
+    local protected = {}
+    for _, entry in ipairs(allPlayers) do
+        if isWhitelisted(entry.player) then
+            protected[entry.torso] = true
+        end
+    end
 
-    for _, upperTorso in ipairs(allPlayers) do
-        if upperTorso ~= survivor then
-            handleTouched:FireServer(upperTorso)
+    if next(protected) == nil then
+        local survivorIndex = math.random(1, #allPlayers)
+        protected[allPlayers[survivorIndex].torso] = true
+    end
+
+    for _, entry in ipairs(allPlayers) do
+        if not protected[entry.torso] then
+            handleTouched:FireServer(entry.torso)
             task.wait(0.05)
         end
     end
@@ -951,14 +965,22 @@ end
 
 player.CharacterAdded:Connect(function()
     auraData.activeThisLife = false
+    stopAura()
 end)
 
 task.spawn(function()
     local CoinCollected = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("CoinCollected")
     CoinCollected.OnClientEvent:Connect(function(_, currentCoins, maxCoins)
-        if coinAuraEnabled and not auraData.activeThisLife and currentCoins >= 5 then
-            auraData.activeThisLife = true
-            startAura()
+        if coinAuraEnabled then
+            if currentCoins >= 1 and not auraData.activeThisLife then
+                auraData.activeThisLife = true
+                startAura()
+            end
+
+            if currentCoins >= maxCoins then
+                stopAura()
+                auraData.activeThisLife = false
+            end
         end
 
         if currentCoins < maxCoins then return end
