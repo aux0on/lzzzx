@@ -311,23 +311,12 @@ player.CharacterAdded:Connect(function()
     end
 end)
 
-local function findToolByName(container, targetName)
-    if not container then return nil end
-    local lowered = targetName:lower()
-    for _, child in ipairs(container:GetChildren()) do
-        if child:IsA("Tool") and child.Name:lower() == lowered then
-            return child
-        end
-    end
-    return nil
-end
-
 local function getRole()
     local bp = player:FindFirstChild("Backpack")
     local char = player.Character
-    if (bp and findToolByName(bp, "Knife")) or (char and findToolByName(char, "Knife")) then
+    if bp and (bp:FindFirstChild("Knife") or (char and char:FindFirstChild("Knife"))) then
         return "Murderer"
-    elseif (bp and findToolByName(bp, "Gun")) or (char and findToolByName(char, "Gun")) then
+    elseif bp and (bp:FindFirstChild("Gun") or (char and char:FindFirstChild("Gun"))) then
         return "Sheriff"
     end
     return "Innocent"
@@ -351,7 +340,7 @@ local function getAnyMurd()
         if plr ~= player then
             local bp = plr:FindFirstChild("Backpack")
             local char = plr.Character
-            if (bp and findToolByName(bp, "Knife")) or (char and findToolByName(char, "Knife")) then
+            if (bp and bp:FindFirstChild("Knife")) or (char and char:FindFirstChild("Knife")) then
                 return plr
             end
         end
@@ -373,7 +362,7 @@ local function getMurd()
         if plr ~= player and (killWlUsersAtMaxEnabled or not isWhitelisted(plr)) then
             local bp = plr:FindFirstChild("Backpack")
             local char = plr.Character
-            if (bp and findToolByName(bp, "Knife")) or (char and findToolByName(char, "Knife")) then
+            if (bp and bp:FindFirstChild("Knife")) or (char and char:FindFirstChild("Knife")) then
                 return plr
             end
         end
@@ -395,7 +384,7 @@ local function getSheriff()
         if plr ~= player and not isWhitelisted(plr) then
             local bp = plr:FindFirstChild("Backpack")
             local char = plr.Character
-            if (bp and findToolByName(bp, "Gun")) or (char and findToolByName(char, "Gun")) then
+            if (bp and bp:FindFirstChild("Gun")) or (char and char:FindFirstChild("Gun")) then
                 return plr
             end
         end
@@ -405,22 +394,29 @@ end
 
 local function getGun()
     local char = player.Character
-    local g = char and findToolByName(char, "Gun")
-    if g then return g end
+    if char and char:FindFirstChild("Gun") then return char.Gun end
     local bp = player:FindFirstChild("Backpack")
-    return bp and findToolByName(bp, "Gun") or nil
+    if bp and bp:FindFirstChild("Gun") then return bp.Gun end
 end
 
 local function hasGun()
-    return getGun() ~= nil
+    local char = player.Character
+    local bp = player:FindFirstChild("Backpack")
+    return (char and char:FindFirstChild("Gun")) or (bp and bp:FindFirstChild("Gun"))
 end
 
 local function getKnife()
     local char = player.Character
-    local k = char and findToolByName(char, "Knife")
-    if k then return k end
+    if char then
+        local k = char:FindFirstChild("Knife")
+        if k then return k end
+    end
     local bp = player:FindFirstChild("Backpack")
-    return bp and findToolByName(bp, "Knife") or nil
+    if bp then
+        local k = bp:FindFirstChild("Knife")
+        if k then return k end
+    end
+    return nil
 end
 
 local function hasKnife()
@@ -590,34 +586,25 @@ local function killAllExceptOne()
     local handleTouched = events:FindFirstChild("HandleTouched")
     if not handleTouched then return false end
 
-    local eligiblePlayers = {}
+    local allPlayers = {}
     local pList = Players:GetPlayers()
     for _, p in ipairs(pList) do
         if p ~= player and p.Character then
             local upperTorso = p.Character:FindFirstChild("UpperTorso")
-            if upperTorso then
-                table.insert(eligiblePlayers, {player = p, torso = upperTorso})
+            if upperTorso and not isWhitelisted(p) then
+                table.insert(allPlayers, upperTorso)
             end
         end
     end
 
-    if #eligiblePlayers < 1 then return false end
+    if #allPlayers < 1 then return false end
 
-    local protected = {}
-    for _, entry in ipairs(eligiblePlayers) do
-        if isWhitelisted(entry.player) then
-            protected[entry.torso] = true
-        end
-    end
+    local survivorIndex = math.random(1, #allPlayers)
+    local survivor = allPlayers[survivorIndex]
 
-    if next(protected) == nil then
-        local survivorIndex = math.random(1, #eligiblePlayers)
-        protected[eligiblePlayers[survivorIndex].torso] = true
-    end
-
-    for _, entry in ipairs(eligiblePlayers) do
-        if not protected[entry.torso] then
-            handleTouched:FireServer(entry.torso)
+    for _, upperTorso in ipairs(allPlayers) do
+        if upperTorso ~= survivor then
+            handleTouched:FireServer(upperTorso)
             task.wait(0.05)
         end
     end
@@ -643,12 +630,10 @@ local function clickRectangularShootButton()
                     local nameLower = gui.Name:lower()
                     local textLower = (gui:IsA("TextButton") or gui:IsA("TextLabel")) and gui.Text:lower() or ""
 
-                    local isShootBtn = (textLower:find("shoot") or nameLower:find("shoot"))
+                    if (textLower == "shoot" or textLower == "shoot murderer" or nameLower:find("shoot"))
                         and not textLower:find("auto")
-                        and not textLower:find("piercer")
-                        and not nameLower:find("auto")
+                        and not textLower:find("piercer") then
 
-                    if isShootBtn then
                         local targetBtn = gui
                         if gui:IsA("TextLabel") then
                             targetBtn = gui.Parent:FindFirstChildWhichIsA("GuiButton") or gui.Parent
@@ -659,27 +644,16 @@ local function clickRectangularShootButton()
                             local tapX = targetBtn.AbsolutePosition.X + (targetBtn.AbsoluteSize.X / 2)
                             local tapY = targetBtn.AbsolutePosition.Y + (targetBtn.AbsoluteSize.Y / 2) + inset.Y
 
-                            if targetBtn:IsA("GuiButton") then
-                                pcall(function() targetBtn:Activate() end)
-                                if firesignal then
-                                    pcall(function() firesignal(targetBtn.MouseButton1Click) end)
-                                    pcall(function() firesignal(targetBtn.Activated) end)
-                                end
+                            if targetBtn:IsA("GuiButton") and firesignal then
+                                pcall(function() firesignal(targetBtn.MouseButton1Click) end)
+                                pcall(function() firesignal(targetBtn.Activated) end)
                             end
 
-                            if UserInputService.TouchEnabled then
-                                pcall(function()
-                                    VIM:SendTouchEvent(1, tapX, tapY, true, game)
-                                    task.wait(0.05)
-                                    VIM:SendTouchEvent(1, tapX, tapY, false, game)
-                                end)
-                            else
-                                VIM:SendMouseButtonEvent(tapX, tapY, 0, true, game, 0)
-                                task.wait(0.05)
-                                VIM:SendMouseButtonEvent(tapX, tapY, 0, false, game, 0)
-                            end
+                            VIM:SendMouseButtonEvent(tapX, tapY, 0, true, game, 0)
+                            task.wait(0.05)
+                            VIM:SendMouseButtonEvent(tapX, tapY, 0, false, game, 0)
                             clicked = true
-                            return
+                            break
                         end
                     end
                 end
@@ -697,26 +671,22 @@ local function startShootingMurderer()
     shootLoopThread = task.spawn(function()
         while autoShootMurdEnabled do
             if not hasGun() then
-                task.wait(0.5)
-                if not autoShootMurdEnabled then break end
-                if not getGun() then
-                    task.wait(1)
-                    if not autoShootMurdEnabled then break end
-                end
-            else
-                local murd = getMurd()
-                if murd and murd.Character then
-                    local humanoid = murd.Character:FindFirstChildOfClass("Humanoid")
-                    if humanoid and humanoid.Health > 0 then
-                        clickRectangularShootButton()
-                        task.wait(3)
-                    else
-                        task.wait(0.5)
-                    end
-                else
-                    task.wait(0.5)
-                end
+                break
             end
+
+            local murd = getMurd()
+            if not murd or not murd.Character then
+                break
+            end
+
+            local humanoid = murd.Character:FindFirstChildOfClass("Humanoid")
+            if not humanoid or humanoid.Health <= 0 then
+                break
+            end
+
+            clickRectangularShootButton()
+
+            task.wait(3)
         end
         shootLoopThread = nil
     end)
@@ -1020,9 +990,7 @@ task.spawn(function()
                 if player.Character == currentLifeChar and autoShootMurdEnabled then
                     createAndTeleportToShootPlatform()
                 end
-
-                local timeoutTick = tick() + 10
-                while player.Character == currentLifeChar and not hasGun() and autoShootMurdEnabled and tick() < timeoutTick do
+                while player.Character == currentLifeChar and not hasGun() and autoShootMurdEnabled do
                     task.wait(0.2)
                 end
 
@@ -1076,10 +1044,6 @@ combat_section:AddToggle("Auto-Shoot Murd", function(v)
             shootLoopThread = nil
         end
         removeShootPlatform()
-    else
-        if hasGun() then
-            startShootingMurderer()
-        end
     end
 end)
 
