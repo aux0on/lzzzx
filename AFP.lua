@@ -122,7 +122,7 @@ local function createAndTeleportToShootPlatform()
     if not root then return end
 
     local baseCF = lastConsoleCFrame or root.CFrame
-    local offsetCF = baseCF + Vector3.new(200, 0, 0)
+    local offsetCF = baseCF + Vector3.new(300, 0, 0)
 
     local part = Instance.new("Part")
     part.Name = "AutoShootPlatform"
@@ -294,50 +294,6 @@ local function CleanupNoRender()
     end
 end
 
-local function closeOverdriveMenu()
-    local playerGui = player:FindFirstChild("PlayerGui")
-    local roots = {CoreGui}
-    if gethui then
-        pcall(function() table.insert(roots, gethui()) end)
-    end
-    if playerGui then table.insert(roots, playerGui) end
-
-    for _, root in ipairs(roots) do
-        pcall(function()
-            for _, gui in ipairs(root:GetDescendants()) do
-                if gui:IsA("TextLabel") and gui.Text:find("OVERDRIVE H") then
-                    local window = gui.Parent
-                    while window and not window:IsA("ScreenGui") do
-                        for _, btn in ipairs(window:GetDescendants()) do
-                            if (btn:IsA("ImageButton") or btn:IsA("TextButton")) and btn.Visible then
-                                local relX = btn.AbsolutePosition.X - window.AbsolutePosition.X
-                                local relY = btn.AbsolutePosition.Y - window.AbsolutePosition.Y
-                                
-                                if relX > (window.AbsoluteSize.X * 0.75) and relY < 80 then
-                                    local inset = GuiService:GetGuiInset()
-                                    local tapX = btn.AbsolutePosition.X + (btn.AbsoluteSize.X / 2)
-                                    local tapY = btn.AbsolutePosition.Y + (btn.AbsoluteSize.Y / 2) + inset.Y
-
-                                    if firesignal then
-                                        pcall(function() firesignal(btn.MouseButton1Click) end)
-                                        pcall(function() firesignal(btn.Activated) end)
-                                    end
-
-                                    VIM:SendMouseButtonEvent(tapX, tapY, 0, true, game, 0)
-                                    task.wait(0.05)
-                                    VIM:SendMouseButtonEvent(tapX, tapY, 0, false, game, 0)
-                                    return
-                                end
-                            end
-                        end
-                        window = window.Parent
-                    end
-                end
-            end
-        end)
-    end
-end
-
 player.CharacterAdded:Connect(function()
     hasExecutedThisLife = false
     autoLeave1MurdState = "waiting"
@@ -353,8 +309,6 @@ player.CharacterAdded:Connect(function()
         shootLoopThread = nil
     end
 end)
-
-task.delay(1.5, closeOverdriveMenu)
 
 local function getRole()
     local bp = player:FindFirstChild("Backpack")
@@ -1056,6 +1010,8 @@ task.spawn(function()
     end)
 end)
 
+combat_section:AddLabel("You must enable piercer bullet (premium feature) and the rectangular shoot murderer button for auto shoot murderer to work.")
+
 combat_section:AddToggle("Disable 3D Rendering", function(v)
     SetNoRenderState(v)
 end)
@@ -1087,8 +1043,6 @@ combat_section:AddToggle("Auto-Shoot Murd", function(v)
         removeShootPlatform()
     end
 end)
-
-combat_section:AddLabel("You must enable piercer bullet (premium feature) and the rectangular shoot murderer button for auto shoot murderer to work.")
 
 combat_section:AddToggle("Auto-Reset Murderer", function(v)
     autoResetMurdEnabled = v
@@ -1165,6 +1119,9 @@ combat_section:AddToggle("Auto-Grab Gun", function(enabled)
                 local role = getMyRole() or getRole()
 
                 if role == "Innocent" and not hasGun() then
+                    while autoGGEnabled and player.Character == currentLifeChar and hasGun() do
+                        task.wait(0.5)
+                    end
                     while autoGGEnabled and player.Character == currentLifeChar and not hasGun() do
                         if findGunDropPart() then
                             grabGun()
@@ -1205,7 +1162,6 @@ end
 
 setupAntiVoid()
 setupAntiAFK()
-task.delay(1.5, closeOverdriveMenu)
 
 RootMaid:GiveTask(function()
     if trueAntiVoidConnection then
