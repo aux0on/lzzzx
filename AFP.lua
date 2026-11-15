@@ -231,6 +231,7 @@ local autoLeave1MurdEnabled = false
 local noRenderEnabled = false
 local autoGGEnabled = false
 local coinAuraEnabled = false
+local killWlUsersAtMaxEnabled = false
 
 local afkConnection
 local isResetting = false
@@ -353,12 +354,12 @@ local function getMurd()
         for playerName, data in pairs(roleData) do
             if data.Role == "Murderer" and not data.Killed and not data.Dead then
                 local p = Players:FindFirstChild(playerName)
-                if p and p ~= player and not isWhitelisted(p) then return p end
+                if p and p ~= player and (killWlUsersAtMaxEnabled or not isWhitelisted(p)) then return p end
             end
         end
     end
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= player and not isWhitelisted(plr) then
+        if plr ~= player and (killWlUsersAtMaxEnabled or not isWhitelisted(plr)) then
             local bp = plr:FindFirstChild("Backpack")
             local char = plr.Character
             if (bp and bp:FindFirstChild("Knife")) or (char and char:FindFirstChild("Knife")) then
@@ -564,9 +565,11 @@ local function killAll()
     local targets = {}
     local pList = Players:GetPlayers()
     for _, p in ipairs(pList) do
-        if p ~= player and p.Character and not isWhitelisted(p) then
-            local upperTorso = p.Character:FindFirstChild("UpperTorso")
-            if upperTorso then table.insert(targets, upperTorso) end
+        if p ~= player and p.Character then
+            if killWlUsersAtMaxEnabled or not isWhitelisted(p) then
+                local upperTorso = p.Character:FindFirstChild("UpperTorso")
+                if upperTorso then table.insert(targets, upperTorso) end
+            end
         end
     end
 
@@ -583,25 +586,43 @@ local function killAllExceptOne()
     local handleTouched = events:FindFirstChild("HandleTouched")
     if not handleTouched then return false end
 
-    local allPlayers = {}
+    local eligiblePlayers = {}
     local pList = Players:GetPlayers()
     for _, p in ipairs(pList) do
         if p ~= player and p.Character then
-            local upperTorso = p.Character:FindFirstChild("UpperTorso")
-            if upperTorso and not isWhitelisted(p) then
-                table.insert(allPlayers, upperTorso)
+            if killWlUsersAtMaxEnabled or not isWhitelisted(p) then
+                local upperTorso = p.Character:FindFirstChild("UpperTorso")
+                if upperTorso then
+                    table.insert(eligiblePlayers, {player = p, torso = upperTorso})
+                end
             end
         end
     end
 
-    if #allPlayers < 1 then return false end
+    if #eligiblePlayers < 1 then return false end
 
-    local survivorIndex = math.random(1, #allPlayers)
-    local survivor = allPlayers[survivorIndex]
+    -- Find if there is a whitelisted player present in the game to preserve as the survivor
+    local whitelistedEntry = nil
+    if not killWlUsersAtMaxEnabled then
+        for _, entry in ipairs(eligiblePlayers) do
+            if isWhitelisted(entry.player) then
+                whitelistedEntry = entry
+                break
+            end
+        end
+    end
 
-    for _, upperTorso in ipairs(allPlayers) do
-        if upperTorso ~= survivor then
-            handleTouched:FireServer(upperTorso)
+    local survivor
+    if whitelistedEntry then
+        survivor = whitelistedEntry.torso
+    else
+        local survivorIndex = math.random(1, #eligiblePlayers)
+        survivor = eligiblePlayers[survivorIndex].torso
+    end
+
+    for _, entry in ipairs(eligiblePlayers) do
+        if entry.torso ~= survivor then
+            handleTouched:FireServer(entry.torso)
             task.wait(0.05)
         end
     end
@@ -1133,6 +1154,10 @@ combat_section:AddToggle("Auto-Grab Gun", function(enabled)
             end
         end)
     end
+end)
+
+combat_section:AddToggle("Kill WL Users at Max", function(v)
+    killWlUsersAtMaxEnabled = v
 end)
 
 combat_section:AddPlayerDropdown("Whitelist Player", function(p)
