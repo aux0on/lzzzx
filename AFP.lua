@@ -1159,10 +1159,20 @@ combat_section:AddToggle("Auto-Grab Gun", function(enabled)
     if enabled then
         task.spawn(function()
             while autoGGEnabled do
-                if player.Character and findGunDropPart() and not hasGun() then
-                    grabGun()
+                local currentLifeChar = player.Character
+                roleCache.data = nil
+                roleCache.timestamp = 0
+                local role = getMyRole() or getRole()
+
+                if role == "Innocent" and not hasGun() then
+                    while autoGGEnabled and player.Character == currentLifeChar and not hasGun() do
+                        if findGunDropPart() then
+                            grabGun()
+                        end
+                        task.wait(0.5)
+                    end
                 end
-                task.wait(0.5)
+                task.wait(1.0)
             end
         end)
     end
