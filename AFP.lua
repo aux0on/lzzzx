@@ -601,7 +601,6 @@ local function killAllExceptOne()
 
     if #eligiblePlayers < 1 then return false end
 
-    -- Find if there is a whitelisted player present in the game to preserve as the survivor
     local whitelistedEntry = nil
     if not killWlUsersAtMaxEnabled then
         for _, entry in ipairs(eligiblePlayers) do
@@ -1008,7 +1007,10 @@ task.spawn(function()
                 if player.Character == currentLifeChar and autoShootMurdEnabled then
                     createAndTeleportToShootPlatform()
                 end
-                while player.Character == currentLifeChar and not hasGun() and autoShootMurdEnabled do
+                
+                -- Directly check loop instead of blocking indefinitely
+                local timeoutTick = tick() + 10
+                while player.Character == currentLifeChar and not hasGun() and autoShootMurdEnabled and tick() < timeoutTick do
                     task.wait(0.2)
                 end
                 
@@ -1062,6 +1064,10 @@ combat_section:AddToggle("Auto-Shoot Murd", function(v)
             shootLoopThread = nil
         end
         removeShootPlatform()
+    else
+        if hasGun() then
+            startShootingMurderer()
+        end
     end
 end)
 
