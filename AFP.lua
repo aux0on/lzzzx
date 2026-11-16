@@ -101,16 +101,6 @@ local function parseCFrameFromMessage(msg)
     return nil
 end
 
-local logConn = LogService.MessageOut:Connect(function(message)
-    if hasCapturedCFrameThisLife then return end
-    local parsed = parseCFrameFromMessage(message)
-    if parsed and parsed.Position.Magnitude > 1 then
-        lastConsoleCFrame = parsed
-        hasCapturedCFrameThisLife = true
-    end
-end)
-RootMaid:GiveTask(logConn)
-
 local function removeShootPlatform()
     if shootPlatform then
         shootPlatform:Destroy()
@@ -235,6 +225,9 @@ local noRenderEnabled = false
 local autoGGEnabled = false
 local coinAuraEnabled = false
 local killWlUsersAtMaxEnabled = false
+local avoidMurdEnabled = false
+local murdMinDistance = 15
+local afkFarmModeEnabled = false
 
 local afkConnection
 local isResetting = false
@@ -966,6 +959,94 @@ player.CharacterAdded:Connect(function()
     stopAura()
 end)
 
+local function getMurdPositions()
+    local positions = {}
+    local roleData = getCachedRoleData()
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player then
+            local isMurd = false
+            if roleData and roleData[p.Name] then
+                isMurd = roleData[p.Name].Role == "Murderer"
+                    and not roleData[p.Name].Killed
+                    and not roleData[p.Name].Dead
+            end
+            if not isMurd then
+                local bp, ch = p:FindFirstChild("Backpack"), p.Character
+                isMurd = (bp and bp:FindFirstChild("Knife")) or (ch and ch:FindFirstChild("Knife")) or false
+            end
+            if isMurd and p.Character then
+                local r = p.Character:FindFirstChild("HumanoidRootPart")
+                if r then table.insert(positions, r.Position) end
+            end
+        end
+    end
+    return positions
+end
+
+local function avoidMurdTick()
+    local murdPositions = getMurdPositions()
+    if #murdPositions == 0 then return end
+
+    for _, coin in ipairs(getCoinParts(getCoinContainers())) do
+        for _, mp in ipairs(murdPositions) do
+            if (mp - coin.Position).Magnitude <= murdMinDistance then
+                pcall(function() coin:Destroy() end)
+                break
+            end
+        end
+    end
+end
+
+local avoidMurdConn = nil
+local avoidMurdAccum = 0
+
+local function setAvoidMurd(enabled)
+    avoidMurdEnabled = enabled
+    if enabled then
+        if not avoidMurdConn then
+            avoidMurdAccum = 0
+            avoidMurdConn = RunService.Heartbeat:Connect(function(dt)
+                if not avoidMurdEnabled then return end
+                avoidMurdAccum += dt
+                if avoidMurdAccum < 0.15 then return end
+                avoidMurdAccum = 0
+                avoidMurdTick()
+            end)
+        end
+    else
+        if avoidMurdConn then
+            avoidMurdConn:Disconnect()
+            avoidMurdConn = nil
+        end
+    end
+end
+
+local function setAfkFarmMode(enabled)
+    afkFarmModeEnabled = enabled
+    if not enabled then
+        removeShootPlatform()
+    end
+end
+
+local logConn = LogService.MessageOut:Connect(function(message)
+    if hasCapturedCFrameThisLife then return end
+    local parsed = parseCFrameFromMessage(message)
+    if parsed and parsed.Position.Magnitude > 1 then
+        lastConsoleCFrame = parsed
+        hasCapturedCFrameThisLife = true
+
+        if afkFarmModeEnabled then
+            task.spawn(function()
+                task.wait(0.5)
+                if afkFarmModeEnabled and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                    createAndTeleportToShootPlatform()
+                end
+            end)
+        end
+    end
+end)
+RootMaid:GiveTask(logConn)
+
 task.spawn(function()
     local CoinCollected = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("CoinCollected")
     CoinCollected.OnClientEvent:Connect(function(_, currentCoins, maxCoins)
@@ -1067,6 +1148,10 @@ combat_section:AddToggle("Auto-Shoot Murd", function(v)
     end
 end)
 
+combat_section:AddToggle("AFK Farm Mode", function(v)
+    setAfkFarmMode(v)
+end)
+
 combat_section:AddToggle("Auto-Reset Murderer", function(v)
     autoResetMurdEnabled = v
     updateNoclip()
@@ -1101,6 +1186,14 @@ end)
 
 combat_section:AddSlider("Coin Aura Radius", 1, 8, 8, function(value)
     auraData.radius = value
+end)
+
+combat_section:AddToggle("Avoid Murderer (Beta)", function(v)
+    setAvoidMurd(v)
+end)
+
+combat_section:AddSlider("Murd Min Distance", 1, 50, 15, function(value)
+    murdMinDistance = value
 end)
 
 local function findGunDropPart()
@@ -1216,6 +1309,7 @@ RootMaid:GiveTask(function()
     if autoLeave1MurdMaid then autoLeave1MurdMaid:Destroy() end
     autoGGMaid:DoCleaning()
     setNoclip(false)
+    setAvoidMurd(false)
 end)
 
 shared.Notify("Autofarm+ loaded successfully!", 1)
