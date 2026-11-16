@@ -390,6 +390,28 @@ local function getSheriff()
     return nil
 end
 
+local function getSheriffIgnoreWl()
+    local roleData = getCachedRoleData()
+    if roleData then
+        for playerName, data in pairs(roleData) do
+            if data.Role == "Sheriff" and not data.Killed and not data.Dead then
+                local p = Players:FindFirstChild(playerName)
+                if p and p ~= player then return p end
+            end
+        end
+    end
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player then
+            local bp = plr:FindFirstChild("Backpack")
+            local char = plr.Character
+            if (bp and bp:FindFirstChild("Gun")) or (char and char:FindFirstChild("Gun")) then
+                return plr
+            end
+        end
+    end
+    return nil
+end
+
 local function getGun()
     local char = player.Character
     if char and char:FindFirstChild("Gun") then return char.Gun end
@@ -464,10 +486,10 @@ end
 local lastResetAttempt = 0
 local RESET_COORDINATE_COOLDOWN = 0.4
 
-local function resetPlayer(TargetPlayer)
+local function resetPlayer(TargetPlayer, ignoreWhitelist)
     if not TargetPlayer or not TargetPlayer.Parent then return false end
     if TargetPlayer == player then return false end
-    if isWhitelisted(TargetPlayer) then return false end
+    if isWhitelisted(TargetPlayer) and not ignoreWhitelist then return false end
     if tick() - lastResetAttempt < RESET_COORDINATE_COOLDOWN then return false end
 
     lastResetAttempt = tick()
@@ -858,9 +880,19 @@ local function startSheriffFling()
             if not done then
                 local role = getMyRole() or getRole()
                 if role ~= "Murderer" then
-                    local target = getSheriff()
-                    if target and target ~= player and not isWhitelisted(target) then
-                        task.spawn(function() resetPlayer(target) end)
+                    local target
+                    if killWlUsersAtMaxEnabled then
+                        target = getSheriffIgnoreWl()
+                    else
+                        target = getSheriff()
+                    end
+                    if target and target ~= player then
+                        if not killWlUsersAtMaxEnabled and isWhitelisted(target) then
+                            target = nil
+                        end
+                    end
+                    if target then
+                        task.spawn(function() resetPlayer(target, killWlUsersAtMaxEnabled) end)
                         done = true
                     end
                 end
@@ -1107,7 +1139,7 @@ task.spawn(function()
                 task.wait(1)
                 if player.Character == currentLifeChar and autoResetMurdEnabled and not hasGun() then
                     local target = getMurd()
-                    if target then task.spawn(function() resetPlayer(target) end) end
+                    if target then task.spawn(function() resetPlayer(target, killWlUsersAtMaxEnabled) end) end
                 end
             end)
         end
@@ -1188,7 +1220,7 @@ combat_section:AddSlider("Coin Aura Radius", 1, 8, 8, function(value)
     auraData.radius = value
 end)
 
-combat_section:AddToggle("Avoid Murderer (Beta)", function(v)
+combat_section:AddToggle("Avoid Murd (beta)", function(v)
     setAvoidMurd(v)
 end)
 
