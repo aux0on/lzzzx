@@ -1033,7 +1033,7 @@ task.spawn(function()
     end)
 end)
 
-combat_section:AddLabel("You must enable piercer bullet (premium feature) and the rectangular shoot murderer button for auto shoot murderer to work.")
+combat_section:AddParagraph("For Auto-Shoot Murd", "You must enable piercer bullet (premium feature) and the rectangular shoot murderer button for auto shoot murderer to work.")
 
 combat_section:AddToggle("Disable 3D Rendering", function(v)
     SetNoRenderState(v)
