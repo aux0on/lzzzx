@@ -76,30 +76,7 @@ function Maid:Destroy() self:DoCleaning() end
 
 local RootMaid = Maid.new()
 
-local lastConsoleCFrame = nil
-local hasCapturedCFrameThisLife = false
 local shootPlatform = nil
-
-local function parseCFrameFromMessage(msg)
-    local nums = {}
-    for numStr in msg:gmatch("[-+]?%d+%.?%d*") do
-        local n = tonumber(numStr)
-        if n then
-            table.insert(nums, n)
-        end
-    end
-    if #nums >= 12 then
-        return CFrame.new(
-            nums[1], nums[2], nums[3],
-            nums[4], nums[5], nums[6],
-            nums[7], nums[8], nums[9],
-            nums[10], nums[11], nums[12]
-        )
-    elseif #nums >= 3 then
-        return CFrame.new(nums[1], nums[2], nums[3])
-    end
-    return nil
-end
 
 local function removeShootPlatform()
     if shootPlatform then
@@ -108,13 +85,13 @@ local function removeShootPlatform()
     end
 end
 
-local function createAndTeleportToShootPlatform()
+local function createAndTeleportToShootPlatform(originCF)
     removeShootPlatform()
     local char = player.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return end
 
-    local baseCF = lastConsoleCFrame or root.CFrame
+    local baseCF = originCF or root.CFrame
     local offsetCF = baseCF + Vector3.new(300, 0, 0)
 
     local part = Instance.new("Part")
@@ -184,7 +161,8 @@ end
 local roleCache = {
     data      = nil,
     timestamp = 0,
-    TTL       = 0.8,
+    TTL       = 3.0,
+    refreshing = false,
 }
 
 local function getCachedRoleData()
@@ -192,12 +170,17 @@ local function getCachedRoleData()
     if roleCache.data and (now - roleCache.timestamp) < roleCache.TTL then
         return roleCache.data
     end
+    if roleCache.refreshing then
+        return roleCache.data
+    end
+    roleCache.refreshing = true
     local ok, result = pcall(function()
         local remote = ReplicatedStorage:FindFirstChild("GetPlayerData", true)
         if remote and remote:IsA("RemoteFunction") then
             return remote:InvokeServer()
         end
     end)
+    roleCache.refreshing = false
     if ok and result then
         roleCache.data      = result
         roleCache.timestamp = now
@@ -206,6 +189,13 @@ local function getCachedRoleData()
     roleCache.timestamp = now
     return roleCache.data
 end
+
+task.spawn(function()
+    while true do
+        pcall(getCachedRoleData)
+        task.wait(3)
+    end
+end)
 
 local function getMyRole()
     local roleData = getCachedRoleData()
@@ -226,7 +216,9 @@ local autoGGEnabled = false
 local coinAuraEnabled = false
 local killWlUsersAtMaxEnabled = false
 local avoidMurdEnabled = false
+local avoidPlayersEnabled = false
 local murdMinDistance = 15
+local playerMinDistance = 15
 local afkFarmModeEnabled = false
 
 local afkConnection
@@ -295,8 +287,8 @@ player.CharacterAdded:Connect(function()
     hasExecutedThisLife = false
     autoLeave1MurdState = "waiting"
     resetAllState = "waiting"
-    hasCapturedCFrameThisLife = false
-    lastConsoleCFrame = nil
+    roleCache.data = nil
+    roleCache.timestamp = 0
     removeShootPlatform()
     if noRenderEnabled then
         task.wait(0.5)
@@ -763,8 +755,6 @@ local function startResetAllMonitor()
     local thread = task.spawn(function()
         while resetAllEnabled do
             updateNoclip()
-            roleCache.data = nil
-            roleCache.timestamp = 0
             local role = getMyRole() or getRole()
 
             if resetAllState == "waiting" then
@@ -1015,42 +1005,78 @@ local function getMurdPositions()
     return positions
 end
 
-local function avoidMurdTick()
-    local murdPositions = getMurdPositions()
-    if #murdPositions == 0 then return end
+local function getPlayerPositions()
+    local positions = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and p.Character then
+            local r = p.Character:FindFirstChild("HumanoidRootPart")
+            if r then table.insert(positions, r.Position) end
+        end
+    end
+    return positions
+end
+
+local function avoidTick()
+    local murdPositions = avoidMurdEnabled and getMurdPositions() or {}
+    local playerPositions = avoidPlayersEnabled and getPlayerPositions() or {}
+    if #murdPositions == 0 and #playerPositions == 0 then return end
 
     for _, coin in ipairs(getCoinParts(getCoinContainers())) do
-        for _, mp in ipairs(murdPositions) do
-            if (mp - coin.Position).Magnitude <= murdMinDistance then
-                pcall(function() coin:Destroy() end)
-                break
+        local shouldDestroy = false
+        if #murdPositions > 0 then
+            for _, mp in ipairs(murdPositions) do
+                if (mp - coin.Position).Magnitude <= murdMinDistance then
+                    shouldDestroy = true
+                    break
+                end
             end
+        end
+        if not shouldDestroy and #playerPositions > 0 then
+            for _, pp in ipairs(playerPositions) do
+                if (pp - coin.Position).Magnitude <= playerMinDistance then
+                    shouldDestroy = true
+                    break
+                end
+            end
+        end
+        if shouldDestroy then
+            pcall(function() coin:Destroy() end)
         end
     end
 end
 
-local avoidMurdConn = nil
-local avoidMurdAccum = 0
+local avoidConn = nil
+local avoidAccum = 0
 
-local function setAvoidMurd(enabled)
-    avoidMurdEnabled = enabled
-    if enabled then
-        if not avoidMurdConn then
-            avoidMurdAccum = 0
-            avoidMurdConn = RunService.Heartbeat:Connect(function(dt)
-                if not avoidMurdEnabled then return end
-                avoidMurdAccum += dt
-                if avoidMurdAccum < 0.15 then return end
-                avoidMurdAccum = 0
-                avoidMurdTick()
+local function updateAvoidLoop()
+    local shouldRun = avoidMurdEnabled or avoidPlayersEnabled
+    if shouldRun then
+        if not avoidConn then
+            avoidAccum = 0
+            avoidConn = RunService.Heartbeat:Connect(function(dt)
+                if not (avoidMurdEnabled or avoidPlayersEnabled) then return end
+                avoidAccum += dt
+                if avoidAccum < 0.15 then return end
+                avoidAccum = 0
+                avoidTick()
             end)
         end
     else
-        if avoidMurdConn then
-            avoidMurdConn:Disconnect()
-            avoidMurdConn = nil
+        if avoidConn then
+            avoidConn:Disconnect()
+            avoidConn = nil
         end
     end
+end
+
+local function setAvoidMurd(enabled)
+    avoidMurdEnabled = enabled
+    updateAvoidLoop()
+end
+
+local function setAvoidPlayers(enabled)
+    avoidPlayersEnabled = enabled
+    updateAvoidLoop()
 end
 
 local function setAfkFarmMode(enabled)
@@ -1060,24 +1086,20 @@ local function setAfkFarmMode(enabled)
     end
 end
 
-local logConn = LogService.MessageOut:Connect(function(message)
-    if hasCapturedCFrameThisLife then return end
-    local parsed = parseCFrameFromMessage(message)
-    if parsed and parsed.Position.Magnitude > 1 then
-        lastConsoleCFrame = parsed
-        hasCapturedCFrameThisLife = true
-
-        if afkFarmModeEnabled then
-            task.spawn(function()
-                task.wait(0.5)
-                if afkFarmModeEnabled and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-                    createAndTeleportToShootPlatform()
-                end
-            end)
+task.spawn(function()
+    local TeleportToPart = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("TeleportToPart")
+    TeleportToPart.OnClientEvent:Connect(function(spawnPart)
+        if not afkFarmModeEnabled then return end
+        if not spawnPart or not spawnPart:IsA("BasePart") then return end
+        task.wait(0.5)
+        if not afkFarmModeEnabled then return end
+        local char = player.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if root then
+            createAndTeleportToShootPlatform(spawnPart.CFrame)
         end
-    end
+    end)
 end)
-RootMaid:GiveTask(logConn)
 
 task.spawn(function()
     local CoinCollected = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("CoinCollected")
@@ -1228,6 +1250,14 @@ combat_section:AddSlider("Murd Min Distance", 1, 50, 15, function(value)
     murdMinDistance = value
 end)
 
+combat_section:AddToggle("Avoid Players", function(v)
+    setAvoidPlayers(v)
+end)
+
+combat_section:AddSlider("Player Min Distance", 1, 50, 15, function(value)
+    playerMinDistance = value
+end)
+
 local function findGunDropPart()
     local gunDrop = workspace:FindFirstChild("GunDrop", true)
     if gunDrop and gunDrop:IsA("BasePart") then
@@ -1262,8 +1292,6 @@ combat_section:AddToggle("Auto-Grab Gun", function(enabled)
         task.spawn(function()
             while autoGGEnabled do
                 local currentLifeChar = player.Character
-                roleCache.data = nil
-                roleCache.timestamp = 0
                 local role = getMyRole() or getRole()
 
                 if role == "Innocent" and not hasGun() then
@@ -1342,6 +1370,7 @@ RootMaid:GiveTask(function()
     autoGGMaid:DoCleaning()
     setNoclip(false)
     setAvoidMurd(false)
+    setAvoidPlayers(false)
 end)
 
 shared.Notify("Autofarm+ loaded successfully!", 1)
