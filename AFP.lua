@@ -1242,19 +1242,21 @@ combat_section:AddSlider("Coin Aura Radius", 1, 8, 8, function(value)
     auraData.radius = value
 end)
 
-combat_section:AddToggle("Avoid Murd (beta)", function(v)
+local avoid_section = afp:AddSection("Avoid Players")
+
+avoid_section:AddToggle("Avoid Murd (beta)", function(v)
     setAvoidMurd(v)
 end)
 
-combat_section:AddSlider("Murd Min Distance", 1, 50, 15, function(value)
+avoid_section:AddSlider("Murd Min Distance", 1, 50, 15, function(value)
     murdMinDistance = value
 end)
 
-combat_section:AddToggle("Avoid Players", function(v)
+avoid_section:AddToggle("Avoid Players", function(v)
     setAvoidPlayers(v)
 end)
 
-combat_section:AddSlider("Player Min Distance", 1, 50, 15, function(value)
+avoid_section:AddSlider("Player Min Distance", 1, 50, 15, function(value)
     playerMinDistance = value
 end)
 
