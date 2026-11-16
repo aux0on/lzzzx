@@ -864,16 +864,17 @@ end
 local function startSheriffFling()
     if sheriffFlingMaid then sheriffFlingMaid:Destroy() end
     sheriffFlingMaid = Maid.new()
+    local done = false
     local thread = task.spawn(function()
         while autoResetSheriffEnabled do
             updateNoclip()
-            local role = getMyRole() or getRole()
-            if role ~= "Murderer" then
-                local target = getSheriff()
-                if target and target ~= player then
-                    resetPlayer(target, 3)
-                    while getSheriff() and autoResetSheriffEnabled and ((getMyRole() or getRole()) ~= "Murderer") do
-                        task.wait(0.5)
+            if not done then
+                local role = getMyRole() or getRole()
+                if role ~= "Murderer" then
+                    local target = getSheriff()
+                    if target and target ~= player and not isWhitelisted(target) then
+                        resetPlayer(target, 3)
+                        done = true
                     end
                 end
             end
@@ -886,6 +887,9 @@ local function startSheriffFling()
         updateNoclip()
     end)
     sheriffFlingMaid:GiveTask(function() task.cancel(thread) end)
+    sheriffFlingMaid:GiveTask(player.CharacterAdded:Connect(function()
+        done = false
+    end))
 end
 
 local function stopSheriffFling()
@@ -1018,18 +1022,18 @@ task.spawn(function()
 
                 if player.Character == currentLifeChar and hasGun() then
                     startShootingMurderer()
-                elseif autoResetMurdEnabled then
-                    local target = getMurd()
-                    if target then resetPlayer(target, 3) end
                 end
             end)
         end
 
-        if role ~= "Murderer" and not hasKnife() and autoResetMurdEnabled and not autoShootMurdEnabled then
+        if role ~= "Murderer" and not hasKnife() and autoResetMurdEnabled then
             task.spawn(function()
-                task.wait(0.5)
-                local target = getMurd()
-                if target then resetPlayer(target, 3) end
+                local currentLifeChar = player.Character
+                task.wait(1)
+                if player.Character == currentLifeChar and autoResetMurdEnabled and not hasGun() then
+                    local target = getMurd()
+                    if target then resetPlayer(target, 3) end
+                end
             end)
         end
     end)
@@ -1174,63 +1178,6 @@ end)
 combat_section:AddButton("Clear Whitelist", function()
     whitelist = {}
     shared.Notify("Whitelist cleared.", 2)
-end)
-
-local autoHopEnabled = false
-local autoHopConn = nil
-local autoHopDebounce = false
-
-local hopSection = afp:AddSection("Server Options")
-hopSection:AddToggle("Server Hop at 1 Player", function(enabled)
-    autoHopEnabled = enabled
-
-    if autoHopConn then
-        autoHopConn:Disconnect()
-        autoHopConn = nil
-    end
-
-    if enabled then
-        autoHopConn = RunService.Heartbeat:Connect(function()
-            if not autoHopEnabled or autoHopDebounce then return end
-            if #Players:GetPlayers() > 1 then return end
-
-            autoHopDebounce = true
-
-            local placeId = game.PlaceId
-            local jobId = game.JobId
-            local url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(placeId)
-            local success, servers = pcall(function()
-                return game:GetService("HttpService"):JSONDecode(game:HttpGet(url))
-            end)
-
-            local hopped = false
-            if success and servers and servers.data then
-                local available = {}
-                for _, server in ipairs(servers.data) do
-                    if server.id ~= jobId and server.playing < server.maxPlayers then
-                        table.insert(available, server)
-                    end
-                end
-                if #available > 0 then
-                    shared.Notify("Server hopping...", 2)
-                    game:GetService("TeleportService"):TeleportToPlaceInstance(placeId, available[math.random(#available)].id, player)
-                    hopped = true
-                end
-            end
-
-            if not hopped then
-                shared.Notify("No server found to hop to", 3)
-                autoHopDebounce = false
-            end
-        end)
-    end
-end)
-
-RootMaid:GiveTask(function()
-    if autoHopConn then
-        autoHopConn:Disconnect()
-        autoHopConn = nil
-    end
 end)
 
 local function setupAntiAFK()
