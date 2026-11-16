@@ -468,95 +468,89 @@ local function fullyRestoreCharacter(character, savedData)
     end
 end
 
-local function resetPlayer(TargetPlayer, attempts)
-    if not TargetPlayer or not TargetPlayer.Parent then return end
+local lastResetAttempt = 0
+local RESET_COORDINATE_COOLDOWN = 0.4
 
-    local maxAttempts = attempts or 3
-    for currentAttempt = 1, maxAttempts do
-        if not TargetPlayer.Parent then break end
-        local tChar = TargetPlayer.Character
-        local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
-        if tHum and tHum.Health <= 0 then break end
+local function resetPlayer(TargetPlayer)
+    if not TargetPlayer or not TargetPlayer.Parent then return false end
+    if TargetPlayer == player then return false end
+    if isWhitelisted(TargetPlayer) then return false end
+    if tick() - lastResetAttempt < RESET_COORDINATE_COOLDOWN then return false end
 
-        local Character = player.Character
-        if not Character then break end
-        local Humanoid = Character:FindFirstChildOfClass("Humanoid")
-        local RootPart = Humanoid and Humanoid.RootPart
-        if not (Character and Humanoid and RootPart and tChar) then break end
+    lastResetAttempt = tick()
 
-        local TRootPart = tChar:FindFirstChild("HumanoidRootPart")
-        local THead = tChar:FindFirstChild("Head")
-        if not TRootPart then break end
+    local Character = player.Character
+    if not Character then return false end
+    local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+    local RootPart = Humanoid and Humanoid.RootPart
+    local TCharacter = TargetPlayer.Character
+    if not (Character and Humanoid and RootPart and TCharacter) then return false end
 
-        isResetting = true
+    local TRootPart = TCharacter:FindFirstChild("HumanoidRootPart")
+    local THead = TCharacter:FindFirstChild("Head")
+    if not TRootPart then return false end
 
-        local savedData = { cframe = RootPart.CFrame }
-        Humanoid.PlatformStand = true
+    local savedData = { cframe = RootPart.CFrame }
+    Humanoid.PlatformStand = true
 
-        local bv = Instance.new("BodyVelocity")
-        bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-        bv.Velocity = Vector3.new(0, -50000, 0)
-        bv.Parent = RootPart
+    local bv = Instance.new("BodyVelocity")
+    bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+    bv.Velocity = Vector3.new(0, -50000, 0)
+    bv.Parent = RootPart
 
-        local bg = Instance.new("BodyGyro")
-        bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-        bg.P = 1000000
-        bg.Parent = RootPart
+    local bg = Instance.new("BodyGyro")
+    bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+    bg.P = 1000000
+    bg.Parent = RootPart
 
-        Workspace.FallenPartsDestroyHeight = 0/0
+    local previousDestroyHeight = Workspace.FallenPartsDestroyHeight
+    Workspace.FallenPartsDestroyHeight = 0/0
 
-        local startTime = tick()
-        local resetDuration = 1.0
+    local startTime = tick()
+    local resetDuration = 1.0
 
-        local completed = false
-        local conn
-        conn = RunService.Heartbeat:Connect(function()
-            if tick() - startTime > resetDuration or not TargetPlayer.Character or not TRootPart.Parent then
-                Workspace.FallenPartsDestroyHeight = originalDestroyHeight
-                bv:Destroy()
-                bg:Destroy()
-                clearRootReference(RootPart)
-                fullyRestoreCharacter(Character, savedData)
-                if conn then conn:Disconnect() end
-                completed = true
-                return
-            end
-
-            if TRootPart and TRootPart.Parent and Character and Character.Parent then
-                local headPos = THead and THead.Position or (TRootPart.Position + Vector3.new(0, 2.5, 0))
-                RootPart.CFrame = CFrame.new(headPos) * CFrame.Angles(math.pi / 2, 0, 0)
-                RootPart.AssemblyLinearVelocity = Vector3.new(0, -50000, 0)
-                RootPart.AssemblyAngularVelocity = Vector3.new(7500, 7500, 7500)
-
-                for i = 1, 5 do
-                    touch(RootPart, TRootPart)
-                    if THead then touch(RootPart, THead) end
-                end
-                setRootReference(RootPart, TRootPart)
-            end
-        end)
-
-        while not completed and TargetPlayer.Parent do
-            task.wait(0.05)
-        end
-
-        if not completed then
-            Workspace.FallenPartsDestroyHeight = originalDestroyHeight
-            if bv.Parent then bv:Destroy() end
-            if bg.Parent then bg:Destroy() end
+    local completed = false
+    local conn
+    conn = RunService.Heartbeat:Connect(function()
+        if tick() - startTime > resetDuration or not TargetPlayer.Character or not TRootPart.Parent then
+            Workspace.FallenPartsDestroyHeight = previousDestroyHeight
+            bv:Destroy()
+            bg:Destroy()
             clearRootReference(RootPart)
             fullyRestoreCharacter(Character, savedData)
             if conn then conn:Disconnect() end
+            completed = true
+            return
         end
 
-        isResetting = false
+        if TRootPart and TRootPart.Parent and Character and Character.Parent then
+            local headPos = THead and THead.Position or (TRootPart.Position + Vector3.new(0, 2.5, 0))
+            RootPart.CFrame = CFrame.new(headPos) * CFrame.Angles(math.pi / 2, 0, 0)
+            RootPart.AssemblyLinearVelocity = Vector3.new(0, -50000, 0)
+            RootPart.AssemblyAngularVelocity = Vector3.new(7500, 7500, 7500)
 
-        task.wait(0.15)
-        local postHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
-        if not postHum or postHum.Health <= 0 then
-            break
+            for i = 1, 5 do
+                touch(RootPart, TRootPart)
+                if THead then touch(RootPart, THead) end
+            end
+            setRootReference(RootPart, TRootPart)
         end
+    end)
+
+    while not completed and TargetPlayer.Parent do
+        task.wait(0.05)
     end
+
+    if not completed then
+        Workspace.FallenPartsDestroyHeight = previousDestroyHeight
+        if bv.Parent then bv:Destroy() end
+        if bg.Parent then bg:Destroy() end
+        clearRootReference(RootPart)
+        fullyRestoreCharacter(Character, savedData)
+        if conn then conn:Disconnect() end
+    end
+
+    return true
 end
 
 local function killAll()
@@ -723,7 +717,7 @@ local function executeResetAll()
             local tChar = sheriff.Character
             local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
             if tHum and tHum.Health > 0 then
-                resetPlayer(sheriff, 3)
+                task.spawn(function() resetPlayer(sheriff) end)
                 task.wait(0.2)
             end
         end
@@ -734,7 +728,7 @@ local function executeResetAll()
                 local tChar = p.Character
                 local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
                 if tHum and tHum.Health > 0 then
-                    resetPlayer(p, 1)
+                    task.spawn(function() resetPlayer(p) end)
                     task.wait(0.2)
                 end
             end
@@ -873,7 +867,7 @@ local function startSheriffFling()
                 if role ~= "Murderer" then
                     local target = getSheriff()
                     if target and target ~= player and not isWhitelisted(target) then
-                        resetPlayer(target, 3)
+                        task.spawn(function() resetPlayer(target) end)
                         done = true
                     end
                 end
@@ -1032,7 +1026,7 @@ task.spawn(function()
                 task.wait(1)
                 if player.Character == currentLifeChar and autoResetMurdEnabled and not hasGun() then
                     local target = getMurd()
-                    if target then resetPlayer(target, 3) end
+                    if target then task.spawn(function() resetPlayer(target) end) end
                 end
             end)
         end
