@@ -1244,11 +1244,11 @@ end)
 
 local avoid_section = afp:AddSection("Avoid Players")
 
-avoid_section:AddToggle("Avoid Murd (beta)", function(v)
+avoid_section:AddToggle("Avoid Murderer", function(v)
     setAvoidMurd(v)
 end)
 
-avoid_section:AddSlider("Murd Min Distance", 1, 50, 15, function(value)
+avoid_section:AddSlider("Murd Min Distance", 1, 10, 5, function(value)
     murdMinDistance = value
 end)
 
@@ -1256,7 +1256,7 @@ avoid_section:AddToggle("Avoid Players", function(v)
     setAvoidPlayers(v)
 end)
 
-avoid_section:AddSlider("Player Min Distance", 1, 50, 15, function(value)
+avoid_section:AddSlider("Player Min Distance", 1, 10, 5, function(value)
     playerMinDistance = value
 end)
 
