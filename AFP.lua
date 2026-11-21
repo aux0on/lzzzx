@@ -77,6 +77,7 @@ function Maid:Destroy() self:DoCleaning() end
 local RootMaid = Maid.new()
 
 local shootPlatform = nil
+local afkPlatform = nil
 
 local function removeShootPlatform()
     if shootPlatform then
@@ -85,14 +86,50 @@ local function removeShootPlatform()
     end
 end
 
-local function createAndTeleportToShootPlatform(originCF)
+local function removeAfkPlatform()
+    if afkPlatform then
+        afkPlatform:Destroy()
+        afkPlatform = nil
+    end
+end
+
+local function disableRagdoll(humanoid)
+    if not humanoid then return end
+    pcall(function()
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Physics, false)
+    end)
+    humanoid.PlatformStand = false
+    humanoid.AutoRotate = true
+end
+
+local function teleportOntoPlatform(root, humanoid, platform)
+    if not root or not platform then return end
+    local standCF = platform.CFrame * CFrame.new(0, (platform.Size.Y / 2) + 3, 0)
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.AssemblyAngularVelocity = Vector3.zero
+    if humanoid then
+        humanoid.PlatformStand = false
+        humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+    end
+    root.CFrame = standCF
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.AssemblyAngularVelocity = Vector3.zero
+end
+
+local function createAndTeleportToShootPlatform(basePos)
     removeShootPlatform()
     local char = player.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
+    local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+    if not root or not humanoid then return end
 
-    local baseCF = originCF or root.CFrame
-    local offsetCF = baseCF + Vector3.new(300, 0, 0)
+    if not basePos then
+        basePos = root.Position
+    end
+
+    local offsetCF = CFrame.new(basePos + Vector3.new(250, 0, 0))
 
     local part = Instance.new("Part")
     part.Name = "AutoShootPlatform"
@@ -105,9 +142,38 @@ local function createAndTeleportToShootPlatform(originCF)
     part.Parent = Workspace
     shootPlatform = part
 
-    root.AssemblyLinearVelocity = Vector3.zero
-    root.AssemblyAngularVelocity = Vector3.zero
-    root.CFrame = offsetCF
+    disableRagdoll(humanoid)
+    task.wait()
+    teleportOntoPlatform(root, humanoid, part)
+    task.wait()
+    disableRagdoll(humanoid)
+end
+
+local function createAndTeleportToAfkPlatform()
+    removeAfkPlatform()
+    local char = player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+    if not root or not humanoid then return end
+
+    local afkPos = Vector3.new(0, -400, 0)
+
+    local part = Instance.new("Part")
+    part.Name = "AfkFarmPlatform"
+    part.Size = Vector3.new(12, 1, 12)
+    part.Anchored = true
+    part.CanCollide = true
+    part.Transparency = 0.5
+    part.Material = Enum.Material.SmoothPlastic
+    part.CFrame = CFrame.new(afkPos) * CFrame.new(0, -3.5, 0)
+    part.Parent = Workspace
+    afkPlatform = part
+
+    disableRagdoll(humanoid)
+    task.wait()
+    teleportOntoPlatform(root, humanoid, part)
+    task.wait()
+    disableRagdoll(humanoid)
 end
 
 local noclipEnabled = false
@@ -220,6 +286,8 @@ local avoidPlayersEnabled = false
 local murdMinDistance = 15
 local playerMinDistance = 15
 local afkFarmModeEnabled = false
+local afkFarmRunThisLife = false
+local afkFarmThread = nil
 
 local afkConnection
 local isResetting = false
@@ -283,24 +351,6 @@ local function CleanupNoRender()
     end
 end
 
-player.CharacterAdded:Connect(function()
-    hasExecutedThisLife = false
-    autoLeave1MurdState = "waiting"
-    resetAllState = "waiting"
-    roleCache.data = nil
-    roleCache.timestamp = 0
-    removeShootPlatform()
-    if noRenderEnabled then
-        task.wait(0.5)
-        RunService:Set3dRenderingEnabled(false)
-        CreateBlackScreen()
-    end
-    if shootLoopThread then
-        task.cancel(shootLoopThread)
-        shootLoopThread = nil
-    end
-end)
-
 local function getRole()
     local bp = player:FindFirstChild("Backpack")
     local char = player.Character
@@ -356,6 +406,28 @@ local function getMurd()
                 return plr
             end
         end
+    end
+    return nil
+end
+
+local function getMurdByKnife()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player then
+            local bp = plr:FindFirstChild("Backpack")
+            local char = plr.Character
+            if (bp and bp:FindFirstChild("Knife")) or (char and char:FindFirstChild("Knife")) then
+                return plr
+            end
+        end
+    end
+    return nil
+end
+
+local function getMurdPositionByKnife()
+    local murd = getMurdByKnife()
+    if murd and murd.Character then
+        local mr = murd.Character:FindFirstChild("HumanoidRootPart")
+        if mr then return mr.Position end
     end
     return nil
 end
@@ -976,11 +1048,6 @@ local function stopAura()
     end
 end
 
-player.CharacterAdded:Connect(function()
-    auraData.activeThisLife = false
-    stopAura()
-end)
-
 local function getMurdPositions()
     local positions = {}
     local roleData = getCachedRoleData()
@@ -1079,12 +1146,92 @@ local function setAvoidPlayers(enabled)
     updateAvoidLoop()
 end
 
+local function hasCoinAreas()
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj:IsA("Model") and obj:FindFirstChild("CoinAreas") then
+            return true
+        end
+    end
+    return false
+end
+
+local function startAfkMonitor()
+    if afkFarmThread then
+        task.cancel(afkFarmThread)
+        afkFarmThread = nil
+    end
+    afkFarmRunThisLife = false
+
+    afkFarmThread = task.spawn(function()
+        while afkFarmModeEnabled do
+            if afkFarmRunThisLife then
+                task.wait(1)
+                continue
+            end
+
+            local char = player.Character
+            if not char then
+                task.wait(0.5)
+                continue
+            end
+
+            if hasCoinAreas() then
+                afkFarmRunThisLife = true
+                createAndTeleportToAfkPlatform()
+                break
+            end
+
+            task.wait(0.25)
+        end
+        afkFarmThread = nil
+    end)
+end
+
+local function stopAfkMonitor()
+    if afkFarmThread then
+        task.cancel(afkFarmThread)
+        afkFarmThread = nil
+    end
+    afkFarmRunThisLife = false
+    removeAfkPlatform()
+end
+
 local function setAfkFarmMode(enabled)
     afkFarmModeEnabled = enabled
-    if not enabled then
-        removeShootPlatform()
+    if enabled then
+        startAfkMonitor()
+    else
+        stopAfkMonitor()
     end
 end
+
+player.CharacterAdded:Connect(function()
+    hasExecutedThisLife = false
+    autoLeave1MurdState = "waiting"
+    resetAllState = "waiting"
+    roleCache.data = nil
+    roleCache.timestamp = 0
+    removeShootPlatform()
+    removeAfkPlatform()
+    afkFarmRunThisLife = false
+    if afkFarmModeEnabled then
+        startAfkMonitor()
+    end
+    if noRenderEnabled then
+        task.wait(0.5)
+        RunService:Set3dRenderingEnabled(false)
+        CreateBlackScreen()
+    end
+    if shootLoopThread then
+        task.cancel(shootLoopThread)
+        shootLoopThread = nil
+    end
+end)
+
+player.CharacterAdded:Connect(function()
+    auraData.activeThisLife = false
+    stopAura()
+end)
 
 task.spawn(function()
     local TeleportToPart = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("TeleportToPart")
@@ -1096,7 +1243,7 @@ task.spawn(function()
         local char = player.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
         if root then
-            createAndTeleportToShootPlatform(spawnPart.CFrame)
+            createAndTeleportToAfkPlatform()
         end
     end)
 end)
@@ -1143,7 +1290,12 @@ task.spawn(function()
                 local currentLifeChar = player.Character
                 task.wait(0.5)
                 if player.Character == currentLifeChar and autoShootMurdEnabled then
-                    createAndTeleportToShootPlatform()
+                    local murdPos = getMurdPositionByKnife()
+                    if murdPos then
+                        createAndTeleportToShootPlatform(murdPos)
+                    else
+                        createAndTeleportToShootPlatform()
+                    end
                 end
                 while player.Character == currentLifeChar and not hasGun() and autoShootMurdEnabled do
                     task.wait(0.2)
@@ -1360,6 +1512,7 @@ RootMaid:GiveTask(function()
         shootLoopThread = nil
     end
     removeShootPlatform()
+    stopAfkMonitor()
     stopAura()
 end)
 
